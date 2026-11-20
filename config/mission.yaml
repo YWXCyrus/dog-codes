@@ -1,0 +1,12 @@
+# Fill in on competition morning (tasks are handed out before the run).
+# Leave a value "" if the task text does not say. Vocabulary (booklet v5.1):
+#   scene_type: kitchen market workshop clinic cleaning_room
+#   object label: medical_kit hand_tools food water utensils
+#   hazard label: high_voltage radioactive chemical biological flammable
+mission_text: ""        # optional free text appended to the scene-server prompt
+tasks:
+  M01: {task_type: object,   label: ""}        # e.g. "find medical equipment" -> label: medical_kit
+  M02: {task_type: hazard,   label: ""}        # e.g. "electrical panel warning" -> label: high_voltage
+  M03: {task_type: survivor, scene_type: ""}   # e.g. "survivor in the food-preparation room" -> kitchen
+  M04: {task_type: qr}
+  M05: {task_type: survivor, scene_type: ""}   # usually left "" : taken from the decoded QR message

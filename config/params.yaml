@@ -1,0 +1,78 @@
+# Tunables for dog_codes. Edit here, or change live:  ros2 param set /supervisor lim_explore_vx 0.3
+# Only the values you are likely to touch are listed; every other parameter has a built-in default
+# (see the top of each node file). Types matter: write decimals for floats (0.2 not 0).
+
+safety_gate:
+  ros__parameters:
+    out_topic: /nav_cmd_vel        # -> twist_mux (priority 10) -> /cmd_vel. Joystick (priority 100) always wins.
+    init_max_vx: 0.25              # caps until the supervisor sets per-mode limits
+    init_max_wz: 0.6
+    abs_max_vx: 0.6                # hard ceiling nobody can exceed
+    abs_max_wz: 1.0
+    tilt_limit_deg: 30.0           # latch + disarm above this roll/pitch (stairs mode raises it, see supervisor)
+    stand_knee_thresh: -2.3        # mean knee joint angle above this = standing (sitting reads about -2.75)
+    fault_sends_estop: false       # true: a tilt fault also sends the STOP code (damps the motors!)
+
+cloud_proc:
+  ros__parameters:
+    cloud_topic: /livox/points
+    sensor_frame: livox_frame
+    odom_frame: odom
+
+explorer:
+  ros__parameters:
+    obs_lo: 0.30                   # obstacle cell = points above this AND with >= obs_extent vertical extent
+    obs_extent: 0.18
+    inflate_m: 0.20                # robot radius used for planning (1.0 m corridors!)
+    v_max: 0.25
+    wz_max: 0.6
+    coverage: true                 # after frontiers run out, visit the centre of every reachable arena cell
+
+terrain:
+  ros__parameters:
+    stair_gaits: ['general']                    # one gait for everything (RUG general); each retry uses it again
+    flat_gait: general
+    v_climb: 0.22
+    approach_dist: 0.45            # gear is switched this far (from body centre) before the first riser
+    blind_bias_m: 0.35             # lidar cannot see the floor within ~1 m: first-riser distance correction
+    min_rise: 0.18                 # climb counts only after the body rose this much
+    rough_std: 0.050               # floor height scatter ahead that counts as rubble (real uneven floor read 0.06-0.10)
+    rough_frac: 0.35
+    rough_on_n: 4                  # consecutive 5 Hz hits to switch ON
+    rough_off_n: 15                # consecutive misses (3 s) to switch OFF
+    start_exclusion_m: 0.9         # stairs "seen" with the foot this close to the start pose = the wall behind the dog; 0 disables
+
+curtain:
+  ros__parameters:
+    v_push: 0.12
+    push_dist: 1.45
+    candidate_thr: 0.45
+
+perception:
+  ros__parameters:
+    image_topic: /camera/color/image_raw
+    scene_server: http://192.168.10.141:8000
+    scene_group_short: true        # send "group02" (as the TA stress test did) instead of group02_XXXX
+    pos_mode: view                 # cell the camera looks at (~1 m ahead / through a door); 'robot' = own cell
+
+reporter:
+  ros__parameters:
+    url: http://192.168.10.141:8001/task_report
+
+supervisor:
+  ros__parameters:
+    run_budget_s: 360.0
+    rough_enabled: false               # ONE gait for the whole run (RUG general): the rough flag no longer switches gait
+    rough_gait: general
+    flat_gait: general
+    start_gait: general
+    gear_min_dwell_s: 8.0              # minimum time between gait switches
+    final_topic: /final_cell_reached   # ASSUMPTION about the organiser's "reached the final cell" message
+    final_type: Bool                   # Bool | Empty | String | Int32 ; '' disables (use scripts/final.sh)
+    defer_obstacles: true              # explore rooms first, take stairs / curtains afterwards
+    defer_until_s: 170.0               # ...but start the obstacles after this many seconds regardless
+    curtain_live: false                # true: push through a curtain-like patch as soon as it is seen
+    lim_explore_vx: 0.25
+    lim_explore_wz: 0.6
+    lim_stairs_vx: 0.28
+    tilt_stairs: 50.0
