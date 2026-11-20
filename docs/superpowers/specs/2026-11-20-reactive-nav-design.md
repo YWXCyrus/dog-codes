@@ -54,6 +54,17 @@ Out of scope: global map, Nav2, SLAM, pre-mapping, any rough-terrain mode (uneve
 - Stored per cell: visited, and dead-end marks attached to (cell, heading). At a junction prefer unvisited, unmarked lanes; if all are marked, STOPPED + tell the Captain. The memory only breaks ties between lanes that are already safe; it never overrides the guard.
 - Position source: leg odometry + IMU (cannot jump; drifts slowly, 1 m cells absorb it). NOT TESTED (no `/leg_odom` in the bags). Fallback: FAST-LIO with a speed-consistency check (it diverged to 67 m/s in trial 2); if inconsistent, drop the memory and fall back to plain wall following.
 
+## 8b. Viewer (view-only, modular)
+- Goal: see the grid memory map in a PC browser during a run, and replay a saved run afterwards.
+- `run.py` starts a small HTTP server (pure Python, no extra packages) on the container, default port 8081 (parameter). Open `http://192.168.10.72:8081`. It is READ-ONLY: it serves a static page and a JSON snapshot; it accepts no commands. Whether the lab network reaches that port is untested.
+- Snapshot at about 2 Hz at `/state.json`, plus a log file of snapshots (JSON lines, ~1 Hz or on change) in the run folder. The same page opens a saved log file for replay (file picker, no server needed), including a log built from past bag data.
+- MODULAR by layers. A layer is a name, a type and a provider function that returns the current data; modules register layers without touching the page:
+  `viewer.layer(name, type, fn, style={...}, default_on=True)`.
+  Generic layer types the page already knows: `cells` (list of (cx, cy, class)), `points` (x, y in metres), `path` (polyline), `markers` (pose + heading + label), `text` (key/value status). The page draws any registered layer from its type and style and gives each one an on/off toggle. A new future feature = one new `viewer.layer(...)` call in Python; a genuinely new drawing type = one small renderer added to the page.
+- Layers in the first version (minimal): `grid` (cells: visited, dead-end marks at (cell, heading), start cell (0,0) highlighted, 1 m cells, +y up, +x right, same convention as the console) and `dog` (marker with heading, plus the path trail).
+- Prepared but off until asked for: lidar obstacle points with the guard's slow/stop zones, status strip (mode, feed rates, tilt), curtain/stairs candidates, camera frame.
+- The page shows what the dog's code believes; if the position estimate drifts, the map drifts too.
+
 ## 9. Add-ons (after the core works)
 - Camera reading: QR, hazard signs, survivors, room type and reporting stay separate from driving; they may only ask for a ~1 s pause. Reuse `perception.py`, `reporter.py`, `scene_client.py`, `qr_decode.py`, `vision.py` after verification. QR was never decoded in any trial (w 170-500 px) - inspect real frames first. Scene server: one request at a time, ~3.5 s, group id still 422 `invalid_group`.
 - Curtain (cloth hung from a bar): lidar candidate (thin surface, flutter, returns behind it) AND camera confirmation (scene server) AND a slow touch test (creep <= 0.15 m/s, <= ~1 m; if progress stops it was a wall: back off, mark as wall). The guard front zone is relaxed only inside this mode. Fallback if the scene server is unusable: lidar + touch test.
@@ -61,10 +72,10 @@ Out of scope: global map, Nav2, SLAM, pre-mapping, any rough-terrain mode (uneve
 - Gait manager: one entry per gait (code, required mode normal/AI, enter/exit steps, speed + tilt limits). Normal gait codes work only outside AI state in move mode; AI gaits only inside AI state (doc 03, 1.2.5 / 1.2.13).
 
 ## 10. Files (new folder `reactive/`, old code stays as reference)
-`run.py` (lifecycle, start-up, Ctrl+C), `sensing.py` (filter, ground, obstacles), `lanes.py`, `driver.py`, `guard.py`, `health.py` (feed rates), `grid.py`, `gait.py`, later `curtain.py`, `stairs.py`; unit tests under `tests/`, simulator under `sim/`.
+`run.py` (lifecycle, start-up, Ctrl+C), `sensing.py` (filter, ground, obstacles), `lanes.py`, `driver.py`, `guard.py`, `health.py` (feed rates), `grid.py`, `gait.py`, `viewer/` (`server.py`, `layers.py`, `index.html`), later `curtain.py`, `stairs.py`; unit tests under `tests/`, simulator under `sim/`.
 
 ## 11. Testing
-- Unit tests on REAL data: replay cloud frames from the bags (trial 3 run 1 at 40-42 s: the guard must slow/stop; start frames of the strip pit: boards below STEP_LIMIT must not veto a lane). Synthetic tests for the lane rule, grid and dead-end logic.
+- Unit tests on REAL data: replay cloud frames from the bags (trial 3 run 1 at 40-42 s: the guard must slow/stop; start frames of the strip pit: boards below STEP_LIMIT must not veto a lane). Synthetic tests for the lane rule, grid and dead-end logic. Viewer: a unit test that registers a dummy layer and checks the snapshot JSON; check the page in a browser with a replayed log in WSL before it ever runs on the container.
 - WSL simulation on `ROS_DOMAIN_ID=42` only; on the container only a non-1 domain (CLAUDE.md rule).
 - First on-dog tests: hoist, a person on STOP, `--dry-run` first. Verify: the dog stops within 0.5 s when the script is killed, `/cmd_vel` works in AI state, the start-up sequence from sitting.
 - Practice-day data (record raw `/livox/points`, `/leg_odom`, IMU, joints, camera): drive across the strips and rubble by controller in RUG general to find STEP_LIMIT, the wobble range and the leg-odometry drift.
