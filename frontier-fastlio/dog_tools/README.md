@@ -20,14 +20,14 @@ Do **not** run `dog_codes` (`mission.launch.py`, `arm.sh`) at the same time.
 ## 0. On the PC (once)
 
 ```
-scp -r "C:\Users\Admin\Desktop\IR 2D\codes\dog_tools" user@192.168.10.72:~/
+# on the dog: git clone https://github.com/YWXCyrus/dog-codes.git ~/dog-codes   (dog_tools is in ~/dog-codes/frontier-fastlio/dog_tools)
 ```
 
 ## 1. On the dog container - 2 SSH terminals (3 with the optional bag)
 
 Environment: if your `~/.bashrc` already sources ROS and the TA workspaces, new terminals are ready
 (`ros2 pkg list | grep lite3_launcher` prints `lite3_launcher`). If not, in every terminal:
-`source ~/dog_tools/scripts/env.sh` (must be **sourced**; it sources the three setup files and prints the domain).
+`source ~/dog-codes/frontier-fastlio/dog_tools/scripts/env.sh` (must be **sourced**; it sources the three setup files and prints the domain).
 `echo $ROS_DOMAIN_ID` must be the dog's domain (the one `ros2 topic list` shows `/odom` on), the same in ALL terminals.
 
 Check nothing from the autonomy code is still running (this must print nothing):
@@ -51,7 +51,7 @@ Wait ~20 s, then in any terminal: `ros2 topic hz /odom` must show a steady rate,
 ### Terminal 2 - the survey (keep the dog standing still for the first ~5 s)
 
 ```bash
-bash ~/dog_tools/scripts/run_survey.sh
+bash ~/dog-codes/frontier-fastlio/dog_tools/scripts/run_survey.sh
 ```
 
 Healthy output (a status line every 5 s):
@@ -68,7 +68,7 @@ processing time in `ms` well below 100. If something is off see section 5.
 ### Optional - gait labels / stumble marks (not needed for the one-gait-per-session plan)
 
 ```bash
-python3 ~/dog_tools/gait_label.py
+python3 ~/dog-codes/frontier-fastlio/dog_tools/gait_label.py
 ```
 
 Menu: `1 flat_slow  2 flat_medium  3 flat_fast  4 crawl  5 general  6 grip  7 hstep`.
@@ -79,7 +79,7 @@ Menu: `1 flat_slow  2 flat_medium  3 flat_fast  4 crawl  5 general  6 grip  7 hs
 ### Optional terminal 4 - light rosbag (lets me tune the detector offline)
 
 ```bash
-bash ~/dog_tools/scripts/record_bag.sh 240      # max seconds, stops by itself; ~1 GB per 4 min; refuses if disk is short
+bash ~/dog-codes/frontier-fastlio/dog_tools/scripts/record_bag.sh 240      # max seconds, stops by itself; ~1 GB per 4 min; refuses if disk is short
 ```
 
 ## 2. The runs: 6 sessions = 3 rug gaits x (slow feel-out, then full run at max efficiency)
@@ -122,7 +122,7 @@ scp -r user@192.168.10.72:~/dog_tools_runs "C:\Users\Admin\Desktop\dog_tools_run
 ```
 
 Then tell me the path. I read `report/summary.txt`, `report/cells.csv` and the two PNGs.
-To rebuild a report on the dog: `bash ~/dog_tools/scripts/make_report.sh`.
+To rebuild a report on the dog: `bash ~/dog-codes/frontier-fastlio/dog_tools/scripts/make_report.sh`.
 
 ## 4. How to read the output (`<run>/report/`)
 

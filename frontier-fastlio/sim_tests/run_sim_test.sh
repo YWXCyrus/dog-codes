@@ -6,7 +6,7 @@ source /opt/ros/humble/setup.bash
 source ~/ws/install/setup.bash
 export ROS_DOMAIN_ID=42
 export DOG_DEBUG_PNG=/tmp/grid.png
-D="/mnt/c/Users/Admin/Desktop/IR 2D/codes"
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # = frontier-fastlio/
 DC="${DOG_CODES:-$D/dog_codes}"      # override to run another copy of dog_codes (A/B tests)
 LOG=/tmp/simtest; mkdir -p $LOG; rm -f $LOG/*.log
 pkill -f sim_world.py; pkill -f dog_codes; pkill -f mission.launch; sleep 1

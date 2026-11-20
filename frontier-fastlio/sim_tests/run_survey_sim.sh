@@ -3,7 +3,7 @@
 source /opt/ros/humble/setup.bash
 source ~/ws/install/setup.bash
 export ROS_DOMAIN_ID=42
-D="/mnt/c/Users/Admin/Desktop/IR 2D/codes"
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # = frontier-fastlio/
 OUT=${OUT:-/tmp/surveytest}; V=${DRIVE_V:-0.3}
 rm -rf "$OUT"; mkdir -p "$OUT/runs"
 pkill -f sim_world.py; pkill -f terrain_survey.py; sleep 1

@@ -1,9 +1,9 @@
-# Source this in every container terminal:   source ~/dog_tools/scripts/env.sh
+# Source this in every container terminal:   source ~/dog-codes/frontier-fastlio/dog_tools/scripts/env.sh
 # (it must be SOURCED, not run with "bash env.sh", otherwise nothing stays set in your terminal)
 # Sets up ROS 2 + the TA workspaces and prints what it found. It does not set ROS_DOMAIN_ID.
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  echo "env.sh must be sourced:  source ~/dog_tools/scripts/env.sh"
+  echo "env.sh must be sourced:  source ~/dog-codes/frontier-fastlio/dog_tools/scripts/env.sh"
   exit 1
 fi
 

@@ -17,7 +17,7 @@ Reliable subset first: leave the start, explore rooms by wall following, never h
 Out of scope: global map, Nav2, SLAM, pre-mapping, any rough-terrain mode (uneven ground is handled by the same lidar logic + RUG general gait + the step limit).
 
 ## 3. Process model
-- ONE script, `reactive/run.py`, started by hand. It runs every node in one process. Ctrl+C: send zero speed at 20 Hz for ~1 s, shut down, leave the dog STANDING (no Stand/Sit on exit). No `arm.sh` / `disarm.sh` / `stop.sh`.
+- ONE script, `reactive-core/run.py`, started by hand. It runs every node in one process. Ctrl+C: send zero speed at 20 Hz for ~1 s, shut down, leave the dog STANDING (no Stand/Sit on exit). No `arm.sh` / `disarm.sh` / `stop.sh`.
 - `--dry-run`: everything runs, nothing is published to the dog (used for container and WSL tests).
 - Expected back-stop: the dog drops axis commands older than 250 ms and the TA twist_mux times out at 0.5 s, so a killed script should stop the dog within 0.5 s. VERIFY on the hoist.
 - Only the guard publishes motion (`/nav_cmd_vel` -> TA twist_mux -> `/cmd_vel`); the controller (priority 100) always wins. Gait / mode codes go via `/simple_cmd`.
@@ -66,12 +66,12 @@ Out of scope: global map, Nav2, SLAM, pre-mapping, any rough-terrain mode (uneve
 - The page shows what the dog's code believes; if the position estimate drifts, the map drifts too.
 
 ## 9. Add-ons (after the core works)
-- Camera reading: QR, hazard signs, survivors, room type and reporting stay separate from driving; they may only ask for a ~1 s pause. Reuse `perception.py`, `reporter.py`, `scene_client.py`, `qr_decode.py`, `vision.py` after verification. QR was never decoded in any trial (w 170-500 px) - inspect real frames first. Scene server: one request at a time, ~3.5 s, group id still 422 `invalid_group`.
+- Camera reading: QR, hazard signs, survivors, room type and reporting stay separate from driving; they may only ask for a ~1 s pause. Copy `perception.py`, `reporter.py`, `scene_client.py`, `qr_decode.py`, `vision.py` from `frontier-fastlio/dog_codes/` into `reactive-core/` (copied, not imported, so each folder stands alone) and verify them there. QR was never decoded in any trial (w 170-500 px) - inspect real frames first. Scene server: one request at a time, ~3.5 s, group id still 422 `invalid_group`.
 - Curtain (cloth hung from a bar): lidar candidate (thin surface, flutter, returns behind it) AND camera confirmation (scene server) AND a slow touch test (creep <= 0.15 m/s, <= ~1 m; if progress stops it was a wall: back off, mark as wall). The guard front zone is relaxed only inside this mode. Fallback if the scene server is unusable: lidar + touch test.
 - Stairs: lidar sees a MONOTONIC rise over several steps (alternating up/down = strip boards, not stairs) AND camera confirms; stop ~0.6 m short and square to the stairs; Enter AI (0x21010528) -> AI Basic (0x2101052A); walk straight at stair speed with a stricter tilt limit; at the top Exit AI (0x2101052B) -> RUG general (0x21010401). Not triggered inside a start-exclusion zone (stair false alarm in trial 1).
 - Gait manager: one entry per gait (code, required mode normal/AI, enter/exit steps, speed + tilt limits). Normal gait codes work only outside AI state in move mode; AI gaits only inside AI state (doc 03, 1.2.5 / 1.2.13).
 
-## 10. Files (new folder `reactive/`, old code stays as reference)
+## 10. Files (folder `reactive-core/`; the old code lives separately in `frontier-fastlio/` as frozen reference, and the two folders are independent)
 `run.py` (lifecycle, start-up, Ctrl+C), `sensing.py` (filter, ground, obstacles), `lanes.py`, `driver.py`, `guard.py`, `health.py` (feed rates), `grid.py`, `gait.py`, `viewer/` (`server.py`, `layers.py`, `index.html`), later `curtain.py`, `stairs.py`; unit tests under `tests/`, simulator under `sim/`.
 
 ## 11. Testing

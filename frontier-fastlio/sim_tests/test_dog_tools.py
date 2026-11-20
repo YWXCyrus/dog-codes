@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for codes/dog_tools (pure logic, no robot). Run in WSL:
-   source /opt/ros/humble/setup.bash; python3 -m unittest -v test_dog_tools   (from codes/sim_tests)
+"""Unit tests for frontier-fastlio/dog_tools (pure logic, no robot). Run in WSL:
+   source /opt/ros/humble/setup.bash; python3 -m unittest -v test_dog_tools   (from frontier-fastlio/sim_tests)
 """
 import csv
 import math

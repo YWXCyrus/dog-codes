@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the trial-2 fixes (20 Nov 2026): BumpDetector, OdomWatchdog, rear_fence_mask, and replays of the
 REAL recorded runs (sim_tests/real_data/*.csv, extracted from the dog's light bags).
-Run in WSL with ROS sourced:   cd codes/sim_tests && python3 -B -m unittest -v test_dog_codes_trial2
+Run in WSL with ROS sourced:   cd frontier-fastlio/sim_tests && python3 -B -m unittest -v test_dog_codes_trial2
 The end-to-end behaviour (explorer + gate together) is tested in the simulator: see README, section 'trial 2 fixes'."""
 import csv
 import math

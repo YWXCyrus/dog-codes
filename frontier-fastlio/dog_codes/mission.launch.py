@@ -3,7 +3,7 @@
   # terminal 1 (TA bringup, no Nav2):
   ros2 launch lite3_launcher lite3.launch.py navigation:=False
   # terminal 2:
-  ros2 launch ~/dog_codes/mission.launch.py group_id:=group02_XXXX
+  ros2 launch ~/dog-codes/frontier-fastlio/dog_codes/mission.launch.py group_id:=group02_XXXX
   # then, with the dog on the hoist and someone on STOP:
   ros2 topic pub --once /quad/arm std_msgs/msg/Bool "{data: true}"
 

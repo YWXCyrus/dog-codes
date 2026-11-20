@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the dog_codes fixes (QR persistence filter). Run in WSL with ROS sourced:
-   cd codes/sim_tests && python3 -B -m unittest -v test_dog_codes_fixes
+   cd frontier-fastlio/sim_tests && python3 -B -m unittest -v test_dog_codes_fixes
 (The explorer fix is tested end-to-end in the simulator: run_sim_test.sh 150 --start=-0.2,0,0)"""
 import os
 import sys
