@@ -1,0 +1,107 @@
+﻿# reactive-core parameters (flat keys). Override any value on the command line:
+#   python3 run.py --set step_limit=0.20 --set wall_side=right
+# Values come from the design spec (docs/specs/2026-11-20-reactive-nav-design.md).
+
+# ---- sensing (spec section 5) ----
+mount_xyz: [0.18678, 0.0, 0.12498]   # base_link -> livox_frame, from /tf_static (session 1)
+mount_pitch_deg: 15.0                # replaced by /tf_static when it arrives
+near_drop_m: 0.30                    # drop points this close to the sensor (zero-range blob)
+max_range_m: 6.0
+patch_m: 0.30                        # local-ground patch size
+ground_pct: 10                       # local ground = this percentile of a patch's heights
+step_limit: 0.25                     # higher than this above local ground = obstacle (tune practice day 1)
+obs_h_max: 1.20                      # above local ground; higher returns (ceiling) ignored
+n_min: 5                             # points needed in a cell to call it an obstacle
+obs_cell_m: 0.10
+persist_k: 3                         # obstacle cell must be seen in persist_k ...
+persist_n: 5                         # ... of the last persist_n scans
+body_h_default: 0.32                 # base_link height above the floor until calibrated
+stairs_trust_m: 0.80                 # STAIRS mode: a patch's own ground is trusted within this of the stance floor
+
+# ---- odometry / short-term memory (spec sections 5, 8) ----
+mem_time_s: 10.0
+mem_dist_m: 3.0
+odom_topic: /leg_odom
+odom_type: pose                      # pose = PoseWithCovarianceStamped (/leg_odom) | odometry = nav_msgs/Odometry (/leg_odom2)
+odom_jump_m: 0.30
+yaw_source: gyro                     # gyro (integrated /imu/data, started from the first odom yaw) | odom
+odom_speed_factor: 1.5
+odom_speed_add: 0.30
+
+# ---- lanes / driving (spec section 6) ----
+lane_w: 0.70
+lane_w_min: 0.50
+lane_d: 1.0
+lane_fov_deg: 135                    # lanes evaluated within +-this (the rear is blind)
+lane_step_deg: 15
+rate_hz: 10.0                        # driver decisions
+cmd_rate_hz: 20.0                    # command output
+cruise_vx: 0.18
+cruise_vx_min: 0.10
+turn_wz: 0.40
+walk_wz_max: 0.20
+head_err_turn_deg: 30
+commit_s: 2.0
+wall_side: left                      # left | right (arenas are mirrored)
+wall_dist_m: 0.60
+side_switch_s: 60.0                  # no new grid cell for this long -> switch wall side
+progress_s: 3.0
+progress_ratio: 0.2
+run_time_s: 0.0                      # > 0: HOLD after this many seconds (0 = off)
+
+# ---- guard (spec section 7) ----
+stop_m: 0.35                         # from the front of the sensor
+slow_m: 0.80
+guard_corridor_margin_m: 0.05
+footprint_l: 0.65                    # body 0.548 x 0.370 (doc 01) + feet/head allowance (MEASURE)
+footprint_w: 0.42
+base_offset_x: 0.0                   # footprint centre relative to base_link along x (MEASURE)
+sweep_margin_m: 0.10
+sweep_dt_s: 0.5
+stale_s: 0.30
+tilt_slow_deg: 15
+tilt_stop_deg: 20
+tilt_latch_deg: 30
+tilt_stop_stairs_deg: 35             # STAIRS: pitch limit (stair slope 0.15/0.30 = 27 deg); roll keeps tilt_stop_deg
+tilt_latch_stairs_deg: 40
+wz_no_memory: 0.20
+
+# ---- grid (spec section 8) ----
+cell_m: 1.0
+
+# ---- stairs (spec section 9) ----
+stairs: climb                        # off | detect | climb
+stair_rise_min: 0.08
+stair_rise_max: 0.20
+stair_min_rises: 2
+stair_bin_m: 0.05                    # fine bins: riser faces fall into short runs that are dropped
+stair_tread_min: 0.15                # a plateau reached by a rise must be this long (wall faces are shorter)
+stair_persist: 5
+stair_start_excl_m: 1.5
+stair_standoff_m: 0.60
+stair_look_s: 2.0
+stair_vx_up: 0.15
+stair_vx_down: 0.10
+stair_flat_exit_m: 1.0
+stair_max_s: 90.0
+stair_no_progress_s: 3.0
+
+# ---- start-up / posture (spec section 4) ----
+knee_names: [LF_Joint_2, RF_Joint_2, LB_Joint_2, RB_Joint_2]
+sit_knee: -2.4                       # mean knee below this = sitting (~ -2.75 measured)
+stand_knee: -1.6                     # mean knee above this = standing (~ -1.29 measured)
+settle_s: 1.0
+settle_vel: 0.05
+stand_timeout_s: 15.0
+test_wz: 0.30                        # start-up / gait turn test
+test_s: 1.0
+test_ratio: 0.5
+simple_cmd_gap_s: 0.4
+simple_cmd_qos: volatile               # volatile (worked in trial 1, session 3) | transient_local (if codes do not arrive)
+
+# ---- viewer / recording (spec sections 8b, 11) ----
+viewer: true
+viewer_port: 8081
+snapshot_hz: 2.0
+record: true
+record_camera: false

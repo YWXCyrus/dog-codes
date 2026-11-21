@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reactive-core map</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6b6b6b; --grid:#e4e4e4; --axis:#bdbdbd; --panel:#f5f5f7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16171a; --fg:#e8e8ea; --muted:#9a9aa0; --grid:#2a2b30; --axis:#44464d; --panel:#202126; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:10px 16px; background:var(--panel); }
+  header b { font-size:15px; }
+  #src { color:var(--muted); }
+  #layers label { margin-right:10px; white-space:nowrap; }
+  main { display:flex; flex-wrap:wrap; }
+  #wrap { flex:1 1 480px; min-width:0; padding:8px 16px; }
+  canvas { width:100%; height:auto; aspect-ratio: 1 / 1; max-height:80vh; display:block; background:var(--bg); }
+  aside { flex:0 1 300px; padding:8px 16px; }
+  #text { white-space:pre-wrap; font:12px/1.35 ui-monospace, monospace; color:var(--fg); }
+  #replay { display:none; gap:8px; align-items:center; padding:0 16px 8px; }
+  #replay input[type=range] { flex:1; }
+  .err { color:#d62728; }
+</style>
+</head>
+<body>
+<header>
+  <b>reactive-core map</b>
+  <span id="src">connecting...</span>
+  <span id="layers"></span>
+  <label>replay a run: <input type="file" id="file" accept=".jsonl,.json,.txt"></label>
+</header>
+<div id="replay"><span id="rt"></span><input type="range" id="slider" min="0" max="0" value="0"></div>
+<main>
+  <div id="wrap"><canvas id="c" width="900" height="900"></canvas></div>
+  <aside><div id="text"></div><div id="errors" class="err"></div></aside>
+</main>
+<script>
+"use strict";
+// View-only. Grid metres: +x right of the start heading, +y along it (up on screen). Cells 1 m.
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const toggles = {};
+let snap = null, frames = [], live = true;
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function bounds(s) {
+  let xs = [0], ys = [0];
+  for (const l of s.layers) {
+    if (!l.data) continue;
+    if (l.type === 'cells') for (const c of l.data.cells) { xs.push(c[0]); ys.push(c[1]); }
+    if (l.type === 'path' || l.type === 'points') for (const p of l.data) { xs.push(p[0]); ys.push(p[1]); }
+    if (l.type === 'markers') for (const m of l.data) { xs.push(m.x); ys.push(m.y); }
+  }
+  const pad = 2;
+  return [Math.min(...xs) - pad, Math.max(...xs) + pad, Math.min(...ys) - pad, Math.max(...ys) + pad];
+}
+
+function draw() {
+  if (!snap) return;
+  const W = cv.width, H = cv.height;
+  ctx.fillStyle = css('--bg'); ctx.fillRect(0, 0, W, H);
+  const [x0, x1, y0, y1] = bounds(snap);
+  const span = Math.max(x1 - x0, y1 - y0, 6);
+  const sc = Math.min(W, H) / span;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const X = x => W / 2 + (x - cx) * sc, Y = y => H / 2 - (y - cy) * sc;
+  // 1 m grid lines on cell borders (cells are centred on integers)
+  ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1;
+  for (let g = Math.floor(cx - span) - 0.5; g <= cx + span; g += 1) { ctx.beginPath(); ctx.moveTo(X(g), 0); ctx.lineTo(X(g), H); ctx.stroke(); }
+  for (let g = Math.floor(cy - span) - 0.5; g <= cy + span; g += 1) { ctx.beginPath(); ctx.moveTo(0, Y(g)); ctx.lineTo(W, Y(g)); ctx.stroke(); }
+  ctx.fillStyle = css('--muted'); ctx.font = '12px system-ui';
+  for (let g = Math.ceil(x0); g <= x1; g++) ctx.fillText(g, X(g) - 3, H - 4);
+  for (let g = Math.ceil(y0); g <= y1; g++) ctx.fillText(g, 4, Y(g) + 4);
+  let text = [], errs = [];
+  for (const l of snap.layers) {
+    if (l.error) errs.push(l.name + ': ' + l.error);
+    if (!toggles[l.name] || !l.data) continue;
+    const st = l.style || {};
+    if (l.type === 'cells') {
+      const m = l.data.cell_m || 1;
+      for (const c of l.data.cells) {
+        const cls = String(c[2]);
+        const col = cls.startsWith('dead') ? (st.dead || '#d62728') : (st[cls] || '#4c8bf5');
+        if (cls.startsWith('dead')) {       // dead-end mark: a bar on the side of that heading
+          const d = cls.slice(5), h = m / 2 - 0.08;
+          const off = {N: [0, h], S: [0, -h], E: [h, 0], W: [-h, 0]}[d] || [0, 0];
+          ctx.fillStyle = col;
+          const vert = d === 'E' || d === 'W';
+          ctx.fillRect(X(c[0] + off[0]) - (vert ? 3 : m * sc * 0.4), Y(c[1] + off[1]) - (vert ? m * sc * 0.4 : 3),
+                       vert ? 6 : m * sc * 0.8, vert ? m * sc * 0.8 : 6);
+          continue;
+        }
+        ctx.globalAlpha = cls === 'visited' ? 0.25 : 0.55;
+        ctx.fillStyle = col;
+        ctx.fillRect(X(c[0] - m / 2) + 1, Y(c[1] + m / 2) + 1, m * sc - 2, m * sc - 2);
+        ctx.globalAlpha = 1;
+      }
+    } else if (l.type === 'path') {
+      ctx.strokeStyle = st.color || '#888'; ctx.lineWidth = 2; ctx.beginPath();
+      l.data.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])));
+      ctx.stroke();
+    } else if (l.type === 'points') {
+      ctx.fillStyle = st.color || '#d62728';
+      for (const p of l.data) ctx.fillRect(X(p[0]) - 2, Y(p[1]) - 2, 4, 4);
+    } else if (l.type === 'markers') {
+      for (const mk of l.data) {
+        const px = X(mk.x), py = Y(mk.y), r = Math.max(6, 0.25 * sc);
+        const dx = Math.sin(mk.yaw), dy = Math.cos(mk.yaw);          // yaw: 0 = +y, clockwise
+        ctx.fillStyle = st.color || '#ff6a00';
+        ctx.beginPath();
+        ctx.moveTo(px + dx * r * 1.6, py - dy * r * 1.6);
+        ctx.lineTo(px - dy * r * 0.8 - dx * r, py - dx * r * 0.8 + dy * r);
+        ctx.lineTo(px + dy * r * 0.8 - dx * r, py + dx * r * 0.8 + dy * r);
+        ctx.closePath(); ctx.fill();
+        if (mk.label) { ctx.fillStyle = css('--fg'); ctx.fillText(mk.label, px + r * 1.2, py - r); }
+      }
+    } else if (l.type === 'text') {
+      text.push(l.name + '\n' + Object.entries(l.data).map(([k, v]) => '  ' + k + ': ' + JSON.stringify(v)).join('\n'));
+    }
+  }
+  document.getElementById('text').textContent = text.join('\n\n');
+  document.getElementById('errors').textContent = errs.join('\n');
+}
+
+function setLayers(s) {
+  const box = document.getElementById('layers');
+  for (const l of s.layers) {
+    if (l.name in toggles) continue;
+    toggles[l.name] = l.default_on;
+    const lab = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = l.default_on;
+    cb.onchange = () => { toggles[l.name] = cb.checked; draw(); };
+    lab.append(cb, ' ' + l.name);
+    box.append(lab);
+  }
+}
+
+function show(s) { snap = s; setLayers(s); draw(); }
+
+async function poll() {
+  if (!live) return;
+  try {
+    const r = await fetch('state.json', {cache: 'no-store'});
+    show(await r.json());
+    document.getElementById('src').textContent = 'live ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('src').textContent = 'no live data (open a run file to replay)';
+  }
+  setTimeout(poll, 500);
+}
+
+document.getElementById('file').onchange = async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const lines = (await f.text()).split('\n').filter(x => x.trim());
+  frames = [];
+  for (const ln of lines) { try { const o = JSON.parse(ln); if (o.layers) frames.push(o); } catch (e) {} }
+  if (!frames.length) { document.getElementById('src').textContent = 'no snapshots in ' + f.name; return; }
+  live = false;
+  const sl = document.getElementById('slider');
+  document.getElementById('replay').style.display = 'flex';
+  sl.max = frames.length - 1; sl.value = frames.length - 1;
+  const upd = () => {
+    const fr = frames[+sl.value];
+    document.getElementById('rt').textContent = 'frame ' + sl.value + ' / ' + (frames.length - 1);
+    show(fr);
+  };
+  sl.oninput = upd; upd();
+  document.getElementById('src').textContent = 'replay: ' + f.name;
+};
+
+window.addEventListener('resize', draw);
+if (location.protocol.startsWith('http')) poll(); else document.getElementById('src').textContent = 'open a run file to replay';
+</script>
+</body>
+</html>
