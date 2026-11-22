@@ -27,6 +27,7 @@ class GuardInput:
     stairs: bool = False
     roll_deg: float = None                         # separate roll / pitch (stairs mode); None = use tilt_deg
     pitch_deg: float = None
+    t: float = None                                # clock (s); None = no tilt push / latch delay
 
 
 class Guard:
@@ -35,6 +36,47 @@ class Guard:
         self.c = cfg
         self.sensor_x = sensor_x
         self.latched = False
+        self.rough_since = None      # tilt first above tilt_slow_deg (flat-ground mode)
+        self.rough_fwd = False       # ... while walking forward -> push through for tilt_push_s
+        self.latch_since = None      # tilt first above tilt_latch_deg
+
+    def _flat_tilt(self, gi, vx):
+        """Flat-ground tilt rule. Returns (action, reason): action in None | 'slow' | 'stop' | 'push'.
+
+        Crossing an obstacle in RUG general tilts the body 15-28 deg for a moment (hand-driven
+        runs, 2026-11-22). Zeroing the command mid-step left the dog stuck on the wooden frame
+        with its legs inside (run 110743: 22 deg -> stop -> sagged to 46 deg). So: if the dog was
+        walking forward when the tilt rose, keep the forward command (no turning) for up to
+        tilt_push_s; only a tilt that LASTS slows / stops it. The latch needs tilt_latch_s above
+        tilt_latch_deg (a fall stays tilted, a step does not); above tilt_latch_hard_deg it is
+        immediate."""
+        c, tilt, t = self.c, gi.tilt_deg, gi.t
+        if tilt > c['tilt_latch_hard_deg']:
+            self.latched = True
+        if tilt > c['tilt_latch_deg']:
+            if t is None:
+                self.latched = True
+            else:
+                if self.latch_since is None:
+                    self.latch_since = t
+                if t - self.latch_since >= c['tilt_latch_s']:
+                    self.latched = True
+        else:
+            self.latch_since = None
+        if self.latched:
+            return 'stop', 'tilt_latch'
+        if tilt <= c['tilt_slow_deg']:
+            self.rough_since = None
+            return None, None
+        if self.rough_since is None and t is not None:
+            self.rough_since = t
+            self.rough_fwd = vx > 0.0
+        if (t is not None and self.rough_fwd and vx > 0.0
+                and t - self.rough_since <= c['tilt_push_s']):
+            return 'push', 'tilt_push'
+        if tilt > c['tilt_stop_deg'] or tilt > c['tilt_latch_deg']:
+            return 'stop', 'tilt_stop'
+        return 'slow', 'tilt_slow'
 
     # ---- helpers ----
     def _front_dist(self, obs):
@@ -101,20 +143,25 @@ class Guard:
         pitch = gi.tilt_deg if gi.pitch_deg is None else abs(gi.pitch_deg)
         if gi.stairs:
             # on stairs the body pitches with the slope (0.15/0.30 m = 27 deg); roll keeps normal limits
+            self.rough_since = self.latch_since = None
             latch = roll > c['tilt_latch_deg'] or pitch > c['tilt_latch_stairs_deg']
             stop = roll > c['tilt_stop_deg'] or pitch > c['tilt_stop_stairs_deg']
+            if latch:
+                self.latched = True
+            if self.latched:
+                return Cmd(0.0, 0.0), ['tilt_latch']
+            if stop:
+                return Cmd(0.0, 0.0), ['tilt_stop']
         else:
-            latch = gi.tilt_deg > c['tilt_latch_deg']
-            stop = gi.tilt_deg > c['tilt_stop_deg']
-        if latch:
-            self.latched = True
-        if self.latched:
-            return Cmd(0.0, 0.0), ['tilt_latch']
-        if stop:
-            return Cmd(0.0, 0.0), ['tilt_stop']
-        if gi.tilt_deg > c['tilt_slow_deg'] and not gi.stairs:
-            vx *= 0.5
-            reasons.append('tilt_slow')
+            action, why = self._flat_tilt(gi, vx)
+            if action == 'stop':
+                return Cmd(0.0, 0.0), [why]
+            if action == 'slow':
+                vx *= 0.5
+                reasons.append(why)
+            elif action == 'push':
+                wz = 0.0                     # straight over the obstacle, full forward command
+                reasons.append(why)
 
         if vx < 0.0:
             vx = 0.0

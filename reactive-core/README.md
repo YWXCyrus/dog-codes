@@ -54,7 +54,7 @@ bring-up). Auto mode must be on in the app (otherwise the start-up turn test fai
    | `ai_no_response` | AI Basic did not obey `/cmd_vel` (turn test); AI already exited -> Captain takes the stairs |
    | `rug_no_response` | after Exit AI the dog does not respond; Enter retries the exit sequence |
    | `stairs_no_progress`, `stairs_tilt`, `stairs_timeout`, `stairs_lost` | trouble on the stairs: the dog stays in AI Basic (never exits AI on a step) |
-   | `tilt_latch` | tilt above 30 deg (40 deg pitch on stairs): latched until restart |
+   | `tilt_latch` | tilt above 30 deg for 0.5 s, or above 45 deg (40 deg pitch on stairs): latched until restart |
 
 5. Ctrl+C: zero speed for 1 s, recorder closed, exit. The dog stays standing.
 6. Feed lost / posture unclear for 5 s (STOP pressed): the script exits.
@@ -80,6 +80,7 @@ the run folder. The ones to tune on the course:
 | `stair_rise_min` / `stair_rise_max` / `stair_tread_min` | 0.08 / 0.20 / 0.15 | stair geometry limits |
 | `stair_vx_up` / `stair_vx_down` | 0.15 / 0.10 | stair speeds |
 | `tilt_stop_deg` / `tilt_stop_stairs_deg` | 20 / 35 | tilt stop (stairs: pitch; roll keeps 20) |
+| `tilt_push_s` / `tilt_latch_s` / `tilt_latch_hard_deg` | 1.0 / 0.5 / 45 | flat ground: keep walking forward through a tilt spike this long; latch only after this long above `tilt_latch_deg`; immediate latch above this |
 | `run_time_s` | 0 (off) | HOLD after this many seconds |
 | `odom_topic` / `odom_type` | /leg_odom / pose | position source (`/leg_odom2` + `odometry` as alternative) |
 | `simple_cmd_qos` | volatile | `transient_local` if gait codes do not arrive |
@@ -145,15 +146,23 @@ Do not "fix" this by filtering those points - they are walls.
   mid-step; with no command and the legs in the frame the dog sagged to 46 deg pitch.
 
 Hand-driven crossings of the same obstacles (runs 112732, 113959): approach 0.30-0.40 m/s
-(leg odometry), body tilt peaks 15-28 deg, the dog walks through. Next test (e-stop held):
+(leg odometry), body tilt peaks 15-28 deg, the dog walks through.
+
+**Fixed in the guard (tilt push-through, flat ground only; stairs unchanged):** if the dog was
+walking forward when the tilt rose above `tilt_slow_deg`, the guard keeps the forward command at
+full value and only zeroes turning (`tilt_push` in the logs) for up to `tilt_push_s` (1.0 s);
+a tilt that lasts longer slows / stops as before. `tilt_latch` now needs `tilt_latch_s` (0.5 s)
+above `tilt_latch_deg` (a step passes, a fall stays); above `tilt_latch_hard_deg` (45) it latches
+at once. Front stop, stale feeds and no-reverse still apply during the push. Replaying run
+110743's IMU: the old guard slowed at 18.31 s and latched at 18.60 s; the new one keeps walking
+through the whole 16-33 deg spike. Approach speed is still `cruise_vx_min` near obstacles, so
+the next test (e-stop held) also raises it:
 
 ```bash
-python3 run.py --live --set cruise_vx=0.30 --set cruise_vx_min=0.25 \
-  --set tilt_slow_deg=25 --set tilt_stop_deg=32 --set tilt_latch_deg=40 --set run_time_s=60
+python3 run.py --live --set cruise_vx=0.30 --set cruise_vx_min=0.25 --set run_time_s=60
 ```
 The front guard still slows from `slow_m` and stops at `stop_m` for walls. If this works, make
-it the default; a better fix is in code: do not zero the command on a short tilt spike while
-walking forward over an obstacle (keep walking for ~1 s, stop only if the tilt persists).
+the speeds the default. Not verified on the dog yet.
 
 **Typos in `--set`.** Several runs had `exit` typed onto the command line
 (`sweep_margin_m=0.05exit`, `mem_time_s=1eexit`) and ran with a text value. `run.py` now

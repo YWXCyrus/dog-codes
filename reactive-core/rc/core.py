@@ -135,7 +135,8 @@ class Core:
     def guard_input(self, t):
         return GuardInput(obs_now=self.scan.obs_now, mem=self._mem_body(t), mem_ok=self.odom_ok,
                           ages=self.ages(t), tilt_deg=self.att.tilt_deg(), stairs=self.driver.stairs_mode,
-                          roll_deg=math.degrees(self.att.roll), pitch_deg=math.degrees(self.att.pitch))
+                          roll_deg=math.degrees(self.att.roll), pitch_deg=math.degrees(self.att.pitch),
+                          t=t)
 
     def filter(self, cmd, t):
         """Guard a command (used for start-up and gait tests too)."""

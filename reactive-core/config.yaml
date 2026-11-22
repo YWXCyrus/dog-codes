@@ -62,6 +62,9 @@ stale_s: 0.30
 tilt_slow_deg: 15
 tilt_stop_deg: 20
 tilt_latch_deg: 30
+tilt_push_s: 1.0                     # walking forward when the tilt rose: keep going (no turning) this long before slow/stop
+tilt_latch_s: 0.5                    # latch only if above tilt_latch_deg this long (a step passes, a fall stays)
+tilt_latch_hard_deg: 45              # above this: latch at once
 tilt_stop_stairs_deg: 35             # STAIRS: pitch limit (stair slope 0.15/0.30 = 27 deg); roll keeps tilt_stop_deg
 tilt_latch_stairs_deg: 40
 wz_no_memory: 0.20
