@@ -126,7 +126,11 @@ def main(argv=None):
     if not ok:
         print('REFUSED: ' + mode)
         return code
-    cfg = config.load(args.config, args.set)
+    try:
+        cfg = config.load(args.config, args.set)
+    except (KeyError, ValueError) as e:
+        print('REFUSED: bad parameter: %s  (check the --set values)' % (e.args[0] if e.args else e))
+        return 2
     publish = args.live or args.sim
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     run_dir = os.path.join(args.runs_dir, stamp)

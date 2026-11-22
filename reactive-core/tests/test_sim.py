@@ -51,9 +51,7 @@ def stairs():
 
 
 def test_stairs_full_sequence(stairs):
-    n = names(stairs)
-    assert n[:2] == ['rug_general', 'rug_general']
-    seq = [x for x in n[2:]]
+    seq = names(stairs)                 # start-up sends nothing (feeds-only, commit 9ee2599)
     assert seq[:2] == ['enter_ai', 'ai_basic']
     assert seq[2:6] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general']
     assert stairs.collisions == 0 and not stairs.reversed
@@ -70,10 +68,11 @@ def test_stairs_ai_ignores_commands():
     assert r.max_support == 0.0 and r.collisions == 0      # never set foot on the stairs
 
 
-def test_sitting_start_one_toggle():
+def test_sitting_start_sends_nothing():
+    # start-up no longer stands the dog up (the controller does that): ready, no codes, no motion
     r = simulate(W.corridor_world(), CFG, T=15.0, dog_kwargs={'sitting': True})
     assert r.startup == 'ready'
-    assert names(r).count('stand_sit') == 1
+    assert 'stand_sit' not in names(r)
 
 
 def test_leg_odom_yaw_frozen_still_turns():
@@ -86,7 +85,11 @@ def test_leg_odom_yaw_frozen_still_turns():
 def test_leg_odom_position_frozen_detected():
     # position never updates: the lidar sees the dog approach walls -> odometry declared frozen,
     # no phantom memory obstacles, no endless no_progress HOLDs, no collisions
-    r = simulate(W.arena_default(), CFG, T=120.0, dog_kwargs={'odom_mode': 'frozen_xy'}, resume_on_hold=True)
+    # starts facing the outer wall 1 m away: frozen odometry is only recognised while a wall is
+    # within 2.9 m ahead (the lidar must see it come closer). The old start-up turn test used to
+    # turn the dog towards a wall first; in open space the dog stops with no_progress HOLDs instead.
+    r = simulate(W.arena_default(), CFG, T=120.0, start=(0.0, 0.0, -math.pi / 2),
+                 dog_kwargs={'odom_mode': 'frozen_xy'}, resume_on_hold=True)
     assert r.collisions == 0 and not r.reversed
     assert any('odom_frozen' in e for e in r.events)
     assert max(math.hypot(x, y) for x, y in r.path) > 2.0

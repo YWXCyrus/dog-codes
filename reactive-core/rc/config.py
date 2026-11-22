@@ -20,6 +20,16 @@ def _coerce(default, value):
         if not isinstance(value, bool):
             raise ValueError('expected true/false, got %r' % (value,))
         return value
+    if isinstance(default, (int, float)):
+        # a number is expected: accept "3e-1" (YAML reads it as text), refuse typos such as
+        # "--set sweep_margin_m=0.05exit" ('exit' typed onto the command line, 2026-11-22)
+        if isinstance(value, str):
+            try:
+                value = float(value)
+            except ValueError:
+                raise ValueError('expected a number, got %r' % (value,)) from None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError('expected a number, got %r' % (value,))
     if isinstance(default, float) and isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     if isinstance(default, int) and isinstance(value, float) and value.is_integer():

@@ -36,3 +36,15 @@ def test_bad_override_format():
 def test_diff():
     cfg = config.load(overrides=['step_limit=0.2'])
     assert config.diff(cfg) == {'step_limit': 0.2}
+
+
+def test_number_typo_rejected():
+    # real case 2026-11-22: 'exit' typed onto the command line -> sweep_margin_m='0.05exit'
+    for bad in ('sweep_margin_m=0.05exit', 'mem_time_s=1eexit', 'cruise_vx=fast', 'stop_m=true'):
+        with pytest.raises(ValueError):
+            config.load(overrides=[bad])
+
+
+def test_number_forms_accepted():
+    cfg = config.load(overrides=['mem_time_s=1', 'cruise_vx=.3', 'stop_m=3e-1'])
+    assert cfg['mem_time_s'] == 1.0 and cfg['cruise_vx'] == 0.3 and cfg['stop_m'] == 0.3

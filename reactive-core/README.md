@@ -129,3 +129,35 @@ ROS_DOMAIN_ID=42 bash sim/run_ros_test.sh stairs 110  # same, with the stairs wo
 `/cmd_vel` in AI Basic (doc 03 hints it may not work; the code then HOLDs at the stairs);
 leg odometry quality; the dog stopping within 0.5 s when the script dies; braking distance;
 real stair / doorway dimensions; footprint and base_link position; lowest lidar beam angle.
+
+## 6. Course findings 2026-11-22 (runs `runs/20261122_*`, bags analysed offline)
+**Start bay is ~1 m wide.** The two "walls" at |y| = 0.45-0.55 m seen in every run are the
+bay's side panels (real). In a 1 m bay the turn sweep (footprint corner radius 0.39 m +
+`sweep_margin_m`) blocks turning on the spot, so BLOCKED / `HOLD: blocked` right after Enter
+is the guard working as designed; the dog can still walk straight out (run 110743 did).
+Do not "fix" this by filtering those points - they are walls.
+
+**Getting stuck on the wooden grid frame in front of the bay (RUG general).** Run 110743:
+- approach at 0.11 m/s: with anything closer than 0.8 m ahead the driver uses `cruise_vx_min`
+  (0.10), whatever `cruise_vx` is;
+- the front feet reached the frame at x ~0.45 m, pitch 12 -> 22 deg in 0.5 s;
+- `tilt_slow` (15) halved, `tilt_stop` (20) zeroed and `tilt_latch` (30) locked the command
+  mid-step; with no command and the legs in the frame the dog sagged to 46 deg pitch.
+
+Hand-driven crossings of the same obstacles (runs 112732, 113959): approach 0.30-0.40 m/s
+(leg odometry), body tilt peaks 15-28 deg, the dog walks through. Next test (e-stop held):
+
+```bash
+python3 run.py --live --set cruise_vx=0.30 --set cruise_vx_min=0.25 \
+  --set tilt_slow_deg=25 --set tilt_stop_deg=32 --set tilt_latch_deg=40 --set run_time_s=60
+```
+The front guard still slows from `slow_m` and stops at `stop_m` for walls. If this works, make
+it the default; a better fix is in code: do not zero the command on a short tilt spike while
+walking forward over an obstacle (keep walking for ~1 s, stop only if the tilt persists).
+
+**Typos in `--set`.** Several runs had `exit` typed onto the command line
+(`sweep_margin_m=0.05exit`, `mem_time_s=1eexit`) and ran with a text value. `run.py` now
+refuses non-numbers for number parameters (`REFUSED: bad parameter ...`).
+
+**Frozen leg odometry in open space** is not recognised (it needs a wall within 2.9 m ahead to
+compare against); the dog then stops with `no_progress` HOLDs. Seen only in the simulator.

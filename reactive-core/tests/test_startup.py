@@ -1,87 +1,64 @@
+"""Start-up (rc/startup.py): feeds only. All four feeds for 1 s -> ready; nothing is ever sent
+(no Stand/Sit, no gait code, no turn test, no floor calibration) - see commit 9ee2599."""
 from rc import config
-from rc import gait as Gt
 from rc.startup import Startup
 
 CFG = config.load()
 ALL = {'livox': True, 'imu': True, 'joints': True, 'odom': True}
-INV = {v: k for k, v in Gt.CODES.items()}
 
 
-def run(su, posture_fn, feeds=ALL, gyro_gain=1.0, floor_ok=True, T=40.0):
-    t, codes, out, wz = 0.0, [], None, 0.0
+def run(su, feeds_fn, T=10.0):
+    t, out, codes, cmds = 0.0, None, [], []
     while t < T:
-        p, settled = posture_fn(t, codes)
-        out = su.tick(t, feeds, p, settled, wz * gyro_gain, floor_ok)
-        wz = out.cmd.wz
-        codes += [INV[c] for c in out.codes]
+        out = su.tick(t, feeds_fn(t))
+        codes += out.codes
+        cmds.append((out.cmd.vx, out.cmd.wz))
         if out.status != 'running':
             break
         t += 0.05
-    return out, codes
+    return out, t, codes, cmds
 
 
-def standing(t, codes):
-    return 'standing', True
-
-
-def test_standing_dog_goes_ready_without_toggle():
-    out, codes = run(Startup(CFG), standing)
+def test_all_feeds_ready_after_one_second():
+    out, t, codes, _ = run(Startup(CFG), lambda t: ALL)
     assert out.status == 'ready'
-    assert codes == ['rug_general', 'rug_general']
+    assert 1.0 <= t < 1.2
 
 
-def test_missing_odom_fails_without_codes():
-    out, codes = run(Startup(CFG), standing, feeds=dict(ALL, odom=False))
-    assert out.status == 'failed' and 'odom' in out.msg and codes == []
-
-
-def test_sitting_one_toggle_then_ready():
-    def post(t, codes):
-        if 'stand_sit' in codes and t > 4.0:
-            return 'standing', t > 5.0
-        return 'sitting', True
-    out, codes = run(Startup(CFG), post)
+def test_nothing_sent_during_startup():
+    out, _, codes, cmds = run(Startup(CFG), lambda t: ALL)
     assert out.status == 'ready'
-    assert codes.count('stand_sit') == 1
+    assert codes == []
+    assert all(c == (0.0, 0.0) for c in cmds)
 
 
-def test_sitting_never_stands_fails_after_one_toggle():
-    out, codes = run(Startup(CFG), lambda t, c: ('sitting', True))
-    assert out.status == 'failed' and codes.count('stand_sit') == 1
+def test_missing_feed_fails_after_5_s_and_names_it():
+    out, t, codes, _ = run(Startup(CFG), lambda t: dict(ALL, odom=False))
+    assert out.status == 'failed'
+    assert 'odom' in out.msg and 'livox' not in out.msg
+    assert 5.0 < t < 5.2
+    assert codes == []
 
 
-def test_unclear_posture_fails_no_codes():
-    out, codes = run(Startup(CFG), lambda t, c: ('unclear', True))
-    assert out.status == 'failed' and codes == []
-
-
-def test_turn_test_failure():
-    out, codes = run(Startup(CFG), standing, gyro_gain=0.0)
-    assert out.status == 'failed' and 'auto mode' in out.msg
-
-
-def test_dry_run_skips_toggle_and_turn_test():
-    out, codes = run(Startup(CFG, dry_run=True), lambda t, c: ('sitting', True), gyro_gain=0.0)
+def test_feed_dropout_restarts_the_one_second_wait():
+    # odom drops for one tick at 0.8 s: ready only 1 s after it is back
+    out, t, _, _ = run(Startup(CFG), lambda t: dict(ALL, odom=not (0.79 < t < 0.81)))
     assert out.status == 'ready'
-    assert 'stand_sit' not in codes
+    assert t >= 1.8
 
 
-def test_never_settled_still_starts():
-    out, codes = run(Startup(CFG), lambda t, c: ('standing', False))
+def test_late_feeds_still_ready():
+    out, t, _, _ = run(Startup(CFG), lambda t: ALL if t >= 3.0 else dict(ALL, livox=False))
     assert out.status == 'ready'
+    assert 4.0 <= t < 4.2
 
 
-def test_turn_blocked_clear_message():
+def test_status_sticks_after_ready():
     su = Startup(CFG)
-    t, out = 0.0, None
-    while t < 20:
-        out = su.tick(t, ALL, 'standing', True, 0.0, True, turn_blocked=True)
-        if out.status != 'running':
-            break
-        t += 0.05
-    assert out.status == 'failed' and 'turning circle' in out.msg
+    run(su, lambda t: ALL)
+    assert su.tick(20.0, {}).status == 'ready'
 
 
-def test_floor_not_found():
-    out, codes = run(Startup(CFG), standing, floor_ok=False)
-    assert out.status == 'failed' and 'floor' in out.msg
+def test_dry_run_same_sequence():
+    out, _, codes, _ = run(Startup(CFG, dry_run=True), lambda t: ALL)
+    assert out.status == 'ready' and codes == []
