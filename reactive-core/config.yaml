@@ -15,7 +15,7 @@ n_min: 5                             # points needed in a cell to call it an obs
 obs_cell_m: 0.10
 persist_k: 3                         # obstacle cell must be seen in persist_k ...
 persist_n: 5                         # ... of the last persist_n scans
-body_h_default: 0.32                 # base_link height above the floor until calibrated
+body_h_default: 0.32                 # base_link height above the floor (fixed, no calibration)
 stairs_trust_m: 0.80                 # STAIRS mode: a patch's own ground is trusted within this of the stance floor
 
 # ---- odometry / short-term memory (spec sections 5, 8) ----

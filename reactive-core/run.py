@@ -10,8 +10,8 @@
   --no-record / --record-camera  run recording (bag) off / with the camera
   --no-viewer                    no web viewer
 
-Start-up: feeds -> stand up if sitting (one toggle) -> RUG general -> turn test -> floor ->
-"Press Enter to go". Enter during a HOLD resumes. Ctrl+C: zero speed for 1 s, exit, the dog
+Start-up: feeds (all four topics arriving) -> "Press Enter to go". Nothing is sent during
+start-up: stand the dog up and choose the gait with the controller first. Enter during a HOLD resumes. Ctrl+C: zero speed for 1 s, exit, the dog
 stays standing. An e-stop is never recovered: if the dog's feed is lost the script stops and exits.
 """
 import argparse
@@ -201,13 +201,7 @@ def main(argv=None):
         while True:
             t = time.monotonic()
             with io.lock:
-                gi = core.guard_input(t)
-                sp = core.guard._sweep_pts(gi)
-                lb = core.guard._sweep_hit(sp, 0.0, cfg['test_wz'])
-                rb = core.guard._sweep_hit(sp, 0.0, -cfg['test_wz'])
-                so = su.tick(t, core.feeds_ok(t), core.posture, core.settled, core.gyro[2],
-                             core.floor_calibrated, turn_sign=-1 if lb else 1,
-                             turn_blocked=lb and rb and publish)
+                so = su.tick(t, core.feeds_ok(t))
                 cmd, _ = core.filter(so.cmd, t)
             io.send(cmd, so.codes)
             if so.msg != last_msg:
@@ -220,7 +214,7 @@ def main(argv=None):
             if so.status == 'ready':
                 break
             time.sleep(dt)
-        print('floor %.3f m below base_link%s' % (-core.floor_z, '' if core.floor_calibrated else ' (default)'))
+        print('floor %.3f m below base_link (fixed, body_h_default)' % -core.floor_z)
 
         # ---------------- gait test only ----------------
         if args.gait_test:

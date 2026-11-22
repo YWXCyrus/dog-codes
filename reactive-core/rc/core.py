@@ -18,7 +18,7 @@ from rc.grid import Grid
 from rc.guard import Cmd, Guard, GuardInput
 from rc.memory import ObstacleMemory
 from rc.odom import LegOdom
-from rc.sensing import Mount, ObstacleDetector, Scan, calibrate_floor, filter_sensor, level_points
+from rc.sensing import Mount, ObstacleDetector, Scan, filter_sensor, level_points
 from rc.stairs import StairDetector, StairsResult
 
 FEEDS = ('livox', 'imu', 'joints', 'odom')
@@ -46,10 +46,7 @@ class Core:
         self.grid = Grid(cfg['cell_m'])
         self.guard = Guard(cfg, sensor_x=float(self.mount.xyz[0]))
         self.driver = Driver(cfg, self.grid)
-        self.floor_z = -cfg['body_h_default']
-        self.floor_samples = []
-        self.floor_calibrated = False
-        self.calib_t0 = None
+        self.floor_z = -cfg['body_h_default']      # fixed (no calibration)
         self.yaw_g = None
         self.arrival = {k: None for k in FEEDS}
         self.scan = Scan(floor_z=self.floor_z)
@@ -110,8 +107,6 @@ class Core:
         self.arrival['livox'] = t
         p = level_points(filter_sensor(xyz_sensor, self.c['near_drop_m'], self.c['max_range_m']),
                          self.mount, self.att.roll, self.att.pitch)
-        if not self.started and not self.floor_calibrated and self.posture == 'standing':
-            self._calibrate(p, t)
         self.p_level = p
         stairs_mode = self.driver.stairs_mode
         self.scan = self.det.update(p, self.floor_z, t, stairs_mode=stairs_mode)
@@ -121,27 +116,6 @@ class Core:
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
 
     # ---------------------------------------------------------------- helpers
-    def _calibrate(self, p, t):
-        """Stance floor height. The default (body_h_default, measured 0.32 m on the dog) is kept
-        unless the floor seen ahead agrees within FLOOR_TOL: raised boards around the start
-        (strip pit) would otherwise shift every height."""
-        FLOOR_TOL = 0.05
-        if self.calib_t0 is None:
-            self.calib_t0 = t
-        f = calibrate_floor(p)
-        if f is not None:
-            self.floor_samples.append(f)
-        default = -self.c['body_h_default']
-        if len(self.floor_samples) >= 8 or t - self.calib_t0 > 3.0:
-            med = float(np.median(self.floor_samples)) if self.floor_samples else None
-            if med is not None and abs(med - default) <= FLOOR_TOL:
-                self.floor_z = med
-            else:
-                self.floor_z = default
-                self.pending_events.append({'t': round(t, 2), 'floor_default': default,
-                                            'seen': None if med is None else round(med, 3)})
-            self.floor_calibrated = True
-
     def ages(self, t):
         return {k: (math.inf if v is None else t - v) for k, v in self.arrival.items()}
 

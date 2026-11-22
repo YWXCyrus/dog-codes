@@ -55,7 +55,7 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
             lb = core.guard._sweep_hit(sp, 0.0, cfg['test_wz'])
             rb = core.guard._sweep_hit(sp, 0.0, -cfg['test_wz'])
             so = su.tick(t, core.feeds_ok(t), core.posture, core.settled, core.gyro[2],
-                         core.floor_calibrated, turn_sign=-1 if lb else 1, turn_blocked=lb and rb)
+                         False, turn_sign=-1 if lb else 1, turn_blocked=lb and rb)
             cmd, _ = core.filter(so.cmd, t)
             for c in so.codes:
                 dog.on_code(c, t)
