@@ -52,8 +52,9 @@ def stairs():
 
 def test_stairs_full_sequence(stairs):
     seq = names(stairs)                 # start-up sends nothing (feeds-only, commit 9ee2599)
-    assert seq[:2] == ['enter_ai', 'ai_basic']
-    assert seq[2:6] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general']
+    # 7718a65: Enter AI goes through manual mode first, Exit AI ends in auto (navigation) mode
+    assert seq[:3] == ['manual', 'enter_ai', 'ai_basic']
+    assert seq[3:8] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general', 'auto']
     assert stairs.collisions == 0 and not stairs.reversed
     assert stairs.max_support >= 0.44                     # was on the platform
     assert stairs.end_pose[0] > 6.0                        # crossed and continued in RUG general
