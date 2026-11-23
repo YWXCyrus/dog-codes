@@ -41,6 +41,7 @@ class DriverInput:
     curtain: object = None              # rc.curtain.Surface ahead (latest scan) or None
     curtain_confident: bool = False     # the detector saw cloth persistently
     curtain_suspect: bool = False       # ... or something slightly cloth-like (camera decides)
+    curtain_hanging: bool = False       # cloth-like AND open below the hem (lidar alone may push)
     lio_xy: tuple = None                # FAST-LIO position when usable (curtain touch test), else None
 
 
@@ -297,8 +298,9 @@ class Driver:
         # ---- curtain trigger (after stairs and QR) ----
         if c['curtain'] != 'off' and di.curtain is not None:
             stuck = self.mode == BLOCKED or t - self.last_new_cell_t > c['cur_last_resort_s']
-            why = self.curtain.wants(t, di.pose, di.curtain, di.curtain_confident, stuck, di.curtain_suspect)
-            if why == 'lidar' and c['curtain'] == 'detect':
+            why = self.curtain.wants(t, di.pose, di.curtain, di.curtain_confident, stuck, di.curtain_suspect,
+                                     di.curtain_hanging)
+            if why in ('lidar', 'suspect') and c['curtain'] == 'detect':
                 if t - getattr(self, '_cur_logged', -1e9) > 5.0:
                     self._cur_logged = t
                     self._ev(t, curtain_seen=di.curtain.summary())

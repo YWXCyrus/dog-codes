@@ -1,19 +1,21 @@
-"""1 m grid memory fixed to the start pose (spec section 8).
-
-Grid frame: start cell (0,0), +y = start heading ("forward", N), +x = right (E). Odometry poses
-(odom frame) are converted with the start pose. The grid only breaks ties between safe lanes.
+"""Cell grid fixed to the start pose, in the ARENA frame of booklet v6.3 section E:
+origin = centre of the start cell, +X = the robot's initial forward direction, +Y = its left at the
+start, cell centres 1.02 m apart (1.00 m walls + 0.02 m posts). Cell (i, j) has its centre at
+(1.02 i, 1.02 j) - the 'pos' the scoring server expects. Odometry poses (odom frame) are converted
+with the start pose. Compass names stay relative to the start: N = start heading (+X), E = its right
+(-Y), S = behind (-X), W = its left (+Y). The driver uses the grid to break ties between safe lanes.
 """
 import math
 
 from rc import geometry as G
 
 DIRS = ['N', 'E', 'S', 'W']
-STEP = {'N': (0, 1), 'E': (1, 0), 'S': (0, -1), 'W': (-1, 0)}
+STEP = {'N': (1, 0), 'E': (0, -1), 'S': (-1, 0), 'W': (0, 1)}      # (di, dj) in the arena frame
 
 
 class Grid:
 
-    def __init__(self, cell_m=1.0):
+    def __init__(self, cell_m=1.02):
         self.cell_m = cell_m
         self.origin = None
         self.visited = set()
@@ -29,13 +31,17 @@ class Grid:
         self.current = None
 
     def to_grid(self, pose):
-        """(gx, gy) in metres: gx = right of the start heading, gy = along it."""
+        """Arena frame (X, Y) in metres: X = along the start heading, Y = to the start's left."""
         ox, oy, oyaw = self.origin
         dx, dy = pose[0] - ox, pose[1] - oy
         c, s = math.cos(oyaw), math.sin(oyaw)
         fwd = c * dx + s * dy
         left = -s * dx + c * dy
-        return -left, fwd
+        return fwd, left
+
+    def centre(self, cell):
+        """Arena-frame centre (X, Y) of cell (i, j) - the 'pos' to report for that cell."""
+        return round(cell[0] * self.cell_m, 2), round(cell[1] * self.cell_m, 2)
 
     def cell(self, pose):
         gx, gy = self.to_grid(pose)
@@ -59,8 +65,9 @@ class Grid:
         return DIRS[k]
 
     def grid_yaw(self, yaw):
-        """Heading in the grid frame, radians, 0 = N, positive = towards E (clockwise)."""
-        return G.wrap(-(yaw - self.origin[2]))
+        """Heading for the viewer, which draws X to the right and Y up with 0 = up, clockwise:
+        the start heading (+X) is pi/2 (pointing right, as in the booklet's coordinate figure)."""
+        return G.wrap(math.pi / 2 - G.wrap(yaw - self.origin[2]))
 
     @staticmethod
     def neighbour(cell, d):

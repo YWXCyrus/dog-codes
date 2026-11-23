@@ -10,7 +10,7 @@ HTTP servers that answer from ground truth and score the run.
 Arena (cells 1.02 m, start cell (0,0) facing +X):
    corridor along +X: (1,0) rubble, curtain at x=2.55, (3,0) stairs up 3x0.10 m, (4,0) final
    room N (1,1): kitchen + survivor + high_voltage sign + QR "My friend is in the clinic."
-   room S (1,-1): clinic + survivor + medical_kit
+   room S (1,-1): clinic + survivor + medical_equipment
 """
 import argparse
 import json
@@ -103,7 +103,7 @@ class World:
         self.kinds = [w[4] for w in W]
         self.start_walls_n = len(W)
         self.rooms = {(1, 1): {'scene': 'kitchen', 'objects': [], 'survivor': True},
-                      (1, -1): {'scene': 'clinic', 'objects': ['medical_kit'], 'survivor': True}}
+                      (1, -1): {'scene': 'clinic', 'objects': ['medical_equipment'], 'survivor': True}}
         # markers: (kind, centre xyz, right xy, size, texture)
         self.markers = []
         self.qr_text = 'My friend is in the clinic.'
@@ -595,8 +595,9 @@ class Truth:
 
 
 def make_handlers(truth):
-    VALID_SCENE = {'kitchen', 'market', 'workshop', 'clinic', 'cleaning_room'}
-    VALID_LABEL = {'medical_kit', 'hand_tools', 'food', 'water', 'utensils', 'high_voltage',
+    VALID_SCENE = {'clothes_shop', 'fitness_centre', 'kitchen', 'market', 'workshop', 'clinic', 'cleaning_room',
+                   'furniture_shop'}
+    VALID_LABEL = {'medical_equipment', 'hand_tools', 'food', 'water', 'utensils', 'high_voltage',
                    'radioactive', 'chemical', 'biological', 'flammable'}
 
     class Scene(BaseHTTPRequestHandler):
@@ -707,8 +708,8 @@ def summary_fn(self):
     k = (CELL, CELL)
     c_ = (CELL, -CELL)
     m = R.get('M01')
-    pts['M01'] = (5 * bool(m and m['label'] == 'medical_kit' and m['scene_type'] == 'clinic') +
-                  5 * bool(m and m['label'] == 'medical_kit' and m['scene_type'] == 'clinic' and near(m['pos'], c_)))
+    pts['M01'] = (5 * bool(m and m['label'] == 'medical_equipment' and m['scene_type'] == 'clinic') +
+                  5 * bool(m and m['label'] == 'medical_equipment' and m['scene_type'] == 'clinic' and near(m['pos'], c_)))
     m = R.get('M02')
     pts['M02'] = (5 * bool(m and m['label'] == 'high_voltage' and m['scene_type'] == 'kitchen') +
                   5 * bool(m and m['label'] == 'high_voltage' and m['scene_type'] == 'kitchen' and near(m['pos'], k)))

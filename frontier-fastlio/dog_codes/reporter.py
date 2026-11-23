@@ -2,7 +2,7 @@
 """reporter: submit task results to the competition scoring server (HTTP POST, JSON).
 
 Input : /quad/report (JSON from perception: task_id, task_type, scene_type, label, pos, message)
-Output: POST http://192.168.10.141:8001/task_report  (booklet v5.1 section F)
+Output: POST http://192.168.10.141:8001/task_report  (booklet v6.3 section E)
 
 * one HTTP request per task result; only the LATEST valid submission per task_id counts, so a
   newer/better result simply replaces the old one;

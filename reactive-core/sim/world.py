@@ -44,8 +44,9 @@ class World:
         L = math.hypot(x1 - x0, y1 - y0)
         return self.add(Box(cx, cy, L, t, 0.0, h, math.atan2(y1 - y0, x1 - x0), name))
 
-    def curtain(self, x0, y0, x1, y1, z0=0.03, z1=1.6, stiff=False):
-        """Cloth hanging from a bar between (x0, y0) and (x1, y1), hem z0 above the floor."""
+    def curtain(self, x0, y0, x1, y1, z0=0.45, z1=1.0, stiff=False):
+        """Cloth hanging from a bar between (x0, y0) and (x1, y1), hem z0 above the floor (booklet v6.3
+        D.4 photo: bar ~1.0 m, hem ~0.45 m; z0=0.03 = a floor-length curtain)."""
         cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
         L = math.hypot(x1 - x0, y1 - y0)
         return self.add(Box(cx, cy, L, 0.02, z0, z1, math.atan2(y1 - y0, x1 - x0),

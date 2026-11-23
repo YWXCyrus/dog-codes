@@ -230,6 +230,7 @@ class Core:
                              front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
                              curtain=self.curtain_surf, curtain_confident=self.curtain_det.confident(),
                              curtain_suspect=self.curtain_det.suspect(),
+                             curtain_hanging=self.curtain_det.hanging(),
                              lio_xy=(tuple(self.lio.p[:2]) if self.lio.usable(t) else None))
             out = self.driver.step(di)
             self.drive_out = out
@@ -257,6 +258,7 @@ class Core:
         return {
             'mode': d.mode, 'phase': d.phase, 'hold': d.hold_reason,
             'cell': list(cell) if cell else None, 'dir': head,
+            'pos': list(self.grid.centre(cell)) if cell else None,     # arena frame (booklet E)
             'front_m': round(front, 2), 'tilt': round(self.att.tilt_deg(), 1),
             'floor_m': round(-self.floor_z, 3),
             'odom_ok': self.odom_ok, 'posture': self.posture, 'lio': self.lio.status(t),

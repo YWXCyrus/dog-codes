@@ -57,8 +57,9 @@ class Lidar:
             hit = (tmax >= np.maximum(tmin, 0.0)) & (tmin > 0.0)
             if b.name in ('curtain', 'stiff_curtain'):
                 fold, period, flutter, see = self.cloth
-                u = lo_[0] + tmin * ld[:, 0]                        # position along the bar
-                off = fold * np.sin(2 * math.pi * u / period + self.phase)
+                with np.errstate(invalid='ignore'):
+                    u = lo_[0] + tmin * ld[:, 0]                    # position along the bar (nan: missed)
+                    off = fold * np.sin(2 * math.pi * np.nan_to_num(u) / period + self.phase)
                 off += self.cloth_rng.normal(0.0, flutter * 0.5, off.shape)
                 with np.errstate(divide='ignore', invalid='ignore'):
                     tmin = tmin + off / np.maximum(np.abs(ld[:, 1]), 0.25)

@@ -50,7 +50,7 @@ class Perception(Node):
             'scene_server': 'http://192.168.10.141:8000',
             'scene_path': '/analyze', 'scene_image_field': 'image',
             'scene_prompt_field': 'prompt', 'scene_group_field': 'group_id',
-            'scene_group_short': True,      # send "group02" (as the stress test did) not full id
+            'scene_group_short': False,     # booklet v6.3 E: same full id (group##_XXXX) on both servers
             'scene_enabled': True, 'scene_min_gap_s': 2.0, 'scene_stationary_gap_s': 9.0,
             'scene_max_speed': 0.4, 'blur_min': 25.0, 'jpeg_quality': 85,
             'scene_conf_min': 0.35, 'survivor_conf_min': 0.5,
@@ -119,6 +119,9 @@ class Perception(Node):
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.drain_results)
         self.create_timer(1.0, self.scheduler)
+        if 'XXXX' in p['group_id']:
+            self.get_logger().error('group_id %s is a PLACEHOLDER - launch with group_id:=<registered '
+                                    'group##_XXXX> (scene server AND scoring server)' % p['group_id'])
         self.get_logger().info('perception up: group=%s tasks=%s mode=%s odom=%s'
                                % (grp, list(self.mission), self.mode, p['odom_topic']))
 
@@ -266,11 +269,9 @@ class Perception(Node):
             self.qr_text = text
             self.qr_seen = None
             self.qr_cell = C.cell_of(pose[0], pose[1])
-            low = text.lower().replace('_', ' ')
-            for s in C.SCENE_TYPES:
-                if s.replace('_', ' ') in low:
-                    self.m05_scene_hint = s
-                    break
+            hint = SC.scene_from_text(text)          # 'My friend is at the gym' -> fitness_centre
+            if hint:
+                self.m05_scene_hint = hint
             self.emit('M04', 'qr', scene=self.scene_now(C.cell_of(pose[0], pose[1])), message=text,
                       score=1.0, src='qr')
             self.evt_pub.publish(C.jmsg({'type': 'qr_decoded', 'text': text,

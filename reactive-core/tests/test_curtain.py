@@ -55,26 +55,34 @@ def test_flat_wall_is_not_cloth():
     assert not d.confident()
 
 
-def test_draped_cloth_is_a_lidar_candidate_from_standing():
-    # draped curtain: folds ~5 cm deep. The lidar alone flags it, the dog standing 1.2 m away
-    d, out = run_det(scans(corridor('curtain'), x=1.3, fold=0.05))
-    s = out[-1]
-    assert s is not None and s.dist == pytest.approx(2.5 - 1.3, abs=0.1)
-    assert abs(s.bearing) < math.radians(5)
-    assert d.confident()
-
-
-def test_taut_sheet_needs_the_camera():
-    # folds ~1 cm and no flutter: to any lidar this is a wall. The 'stuck + tall surface -> ask the
-    # camera' path handles it (closed loop); the lidar alone must not claim it
+def taut_scans(hem, n=8):
     from sim.lidar import Lidar as L_
     m = Mount(np.array(CFG['mount_xyz']), math.radians(CFG['mount_pitch_deg']))
     lid = L_(mount_xyz=CFG['mount_xyz'], mount_pitch_deg=CFG['mount_pitch_deg'], cloth_fold_m=0.01,
              cloth_flutter_m=0.0, cloth_see_through=0.0)
-    w = corridor('curtain')
-    d, out = run_det([level_points(lid.scan(w, 1.3, 0.0, 0.32, 0.0), m, 0.0, 0.0) for _ in range(8)])
+    w = corridor()
+    w.curtain(2.5, -0.7, 2.5, 0.7, z0=hem)
+    return [level_points(lid.scan(w, 1.3, 0.0, 0.32, 0.0), m, 0.0, 0.0) for _ in range(n)]
+
+
+def test_booklet_curtain_is_hanging_even_taut():
+    # booklet v6.3 D.4: hung from a bar at ~1 m, hem ~0.45 m. Even taut (no folds, no flutter, not
+    # see-through) the lidar sees it OPEN BELOW - a wall reaches the floor - from 1.2 m standing
+    d, out = run_det(taut_scans(hem=0.45))
+    s = out[-1]
+    assert s is not None and s.dist == pytest.approx(2.5 - 1.3, abs=0.1)
+    assert abs(s.bearing) < math.radians(5)
+    assert s.open_below >= CFG['cur_open_push']
+    assert d.confident() and d.hanging()
+
+
+def test_floor_length_taut_sheet_needs_the_camera():
+    # a taut sheet down to the floor is a wall to any lidar: never 'hanging' (no push without the
+    # camera); the 'stuck + tall surface -> ask the camera' path handles it (closed loop)
+    d, out = run_det(taut_scans(hem=0.03))
     assert out[-1] is not None and out[-1].tall >= CFG['cur_tall_min']
-    assert not d.confident()
+    assert out[-1].open_below < CFG['cur_open_lo']
+    assert not d.hanging()
 
 
 def test_low_obstacle_is_never_a_curtain():
@@ -95,6 +103,7 @@ def test_real_walls_are_not_candidates():
         d = CurtainDetector(CFG)
         for j in range(meta.shape[0]):
             d.update(z['w%d_f%d' % (w, j)].astype(float), float(meta[j, 1]), float(meta[j, 0]), float(meta[j, 2]))
+            assert not d.hanging(), str(z['w%d_bag' % w])        # never a push without the camera
             assert not d.confident(), str(z['w%d_bag' % w])
 
 

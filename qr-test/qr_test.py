@@ -2,7 +2,7 @@
 """QR test bench for the challenge (perception only - never sends anything to the dog).
 
 Uses the SAME code as the mission (frontier-fastlio/dog_codes): vision.decode_qr (OpenCV locator +
-our pure-python decoder) and reporter.validate (booklet v5.1 section F JSON). Nothing in that
+our pure-python decoder) and reporter.validate (booklet v6.3 section E JSON). Nothing in that
 folder or in reactive-core is changed or started.
 
   python3 qr_test.py selftest                       # synthetic codes: size / angle / blur limits
@@ -29,7 +29,6 @@ MISSION = os.path.join(HERE, '..', 'frontier-fastlio', 'dog_codes')
 sys.path.insert(0, MISSION)
 import vision as V                                       # noqa: E402  (mission QR pipeline)
 
-SCENES = ['kitchen', 'market', 'workshop', 'clinic', 'cleaning_room']   # = common.SCENE_TYPES
 DEFAULT_URL = 'http://192.168.10.141:8001/task_report'                  # = reporter.py default
 
 
@@ -78,12 +77,9 @@ def qr_report(text, task_id, scene=''):
 
 
 def scene_hint(text):
-    """Same rule as perception.do_qr: first scene word in the text -> M05 target room."""
-    low = text.lower().replace('_', ' ')
-    for s in SCENES:
-        if s.replace('_', ' ') in low:
-            return s
-    return ''
+    """Same rule as perception.do_qr (scene_client.scene_from_text) -> M05 target room."""
+    import scene_client
+    return scene_client.scene_from_text(text)
 
 
 def post(url, payload, timeout=6.0):

@@ -47,7 +47,8 @@ class Surface:
     thick: float = 0.0
     pen: float = 0.0
     flutter: float = 0.0
-    tall: float = 0.0               # share of 0.1 m height slices cur_h_lo..cur_tall_top_m with returns ON the surface
+    tall: float = 0.0               # share of 0.1 m slices cur_cloth_lo..cur_tall_top_m with returns ON the surface (the cloth)
+    open_below: float = -1.0        # share of 0.1 m slices under the hem with NO return on the surface (-1 = not visible)
     score: float = 0.0
     n_bins: int = 0
     axis: tuple = (0.0, 1.0)         # unit vector along the surface (body frame)
@@ -58,6 +59,7 @@ class Surface:
         return {'dist': round(self.dist, 2), 'bearing_deg': round(math.degrees(self.bearing), 1),
                 'width': round(self.width, 2), 'wavy': round(self.wavy, 4), 'thick': round(self.thick, 4),
                 'pen': round(self.pen, 3), 'flutter': round(self.flutter, 4), 'tall': round(self.tall, 2),
+                'open_below': round(self.open_below, 2),
                 'score': round(self.score, 3)}
 
 
@@ -88,25 +90,33 @@ class CurtainDetector:
         s = self._surface(p, floor_z, t, gyro_z)
         self.last = s
         ok = s is not None and s.score >= c['cur_suspect_thr'] and s.dist <= c['cur_detect_m']
-        self.hist.append((s.centre, s.bearing, s.score) if ok else None)
+        self.hist.append((s.centre, s.bearing, s.score, s.open_below) if ok else None)
         return s
 
     def suspect(self):
         """Like confident() at the lower cur_suspect_thr: worth a camera question, no blind push."""
         return self.confident(self.c['cur_suspect_thr'])
 
-    def confident(self, thr=None):
+    def hanging(self):
+        """confident() AND seen open below the hem (booklet curtain: bar ~1 m, hem ~0.45 m) in at least
+        cur_open_persist of those scans - the only lidar evidence trusted for a push without the camera
+        (real panels / props: open_below <= 0.5 in 9 runs; texture alone gave false candidates)."""
+        return self.confident(open_min=self.c['cur_open_push'])
+
+    def confident(self, thr=None, open_min=None):
         """cur_persist_k of the last cur_persist_n scans scored as cloth ON THE SAME PATCH: window
         centres within cur_persist_m (the dog moves < 0.1 m in 0.5 s) and the SAME PLANE, normals
         within cur_persist_deg - a hanging sheet fits the same line every scan, clutter does not
         (the toy market stall, run 113959 t=64 s: 0, 12, 25, 11 deg in four scans)."""
         thr = self.c['cur_score_thr'] if thr is None else thr
         good = [g for g in self.hist if g is not None and g[2] >= thr]
+        if open_min is not None and sum(1 for g in good if g[3] >= open_min) < self.c['cur_open_persist']:
+            return False
         if len(good) < self.c['cur_persist_k']:
             return False
         tol = math.radians(self.c['cur_persist_deg'])
-        for (rc_, rb, _) in good:
-            same = [1 for (cc, bb, _) in good if math.hypot(cc[0] - rc_[0], cc[1] - rc_[1]) <= self.c['cur_persist_m']
+        for (rc_, rb, _, _) in good:
+            same = [1 for (cc, bb, _, _) in good if math.hypot(cc[0] - rc_[0], cc[1] - rc_[1]) <= self.c['cur_persist_m']
                     and abs(G.wrap(bb - rb)) <= tol]
             if len(same) >= self.c['cur_persist_k']:
                 return True
@@ -174,7 +184,11 @@ class CurtainDetector:
         # a curtain is a PATCH of a surface (a doorway in a panel wall, flush with it): every segment
         # is scored in sliding windows of ~a doorway's width; the most cloth-like window ahead wins,
         # or (nothing cloth-like) the window nearest straight ahead (for the 'stuck' camera check)
-        slices = np.arange(c['cur_h_lo'], c['cur_tall_top_m'], 0.1)
+        slices = np.arange(c['cur_cloth_lo'], c['cur_tall_top_m'], 0.1)    # the cloth itself
+        low_slices = np.arange(c['cur_low_lo'], c['cur_hem_max'], 0.1)
+        sensor_x = float(c['mount_xyz'][0])
+        sensor_h = float(c['mount_xyz'][2]) - floor_z            # lidar height above the floor
+        tan_low = math.tan(math.radians(c['cur_low_vis_deg']))
         best, nearest = None, None
         for sg in segs:
             if len(sg) < 5:
@@ -226,6 +240,16 @@ class CurtainDetector:
                 pen = behind / max(1, behind + nearp)
                 hs = hs_all[sw & (np.abs(sd_all) < 0.10)]
                 tall = float(np.mean([((hs >= z) & (hs < z + 0.1)).sum() >= 3 for z in slices])) if slices.size else 0.0
+                # open below (booklet v6.3 D.4: cloth hung from a bar at ~1 m, hem ~0.45 m): a wall
+                # reaches the floor, a curtain does not. Only where the lowest beam reaches that low,
+                # and not when something in front hides the low band
+                open_below = -1.0
+                r_s = math.hypot(cen[0] - sensor_x, cen[1])
+                if sensor_h - r_s * tan_low <= c['cur_low_lo'] + 0.02:
+                    low_front = int((sw & (hs_all > c['cur_low_lo']) & (hs_all < c['cur_hem_max'])
+                                     & (sd_all < -0.15)).sum())
+                    if low_front < 10:
+                        open_below = float(np.mean([((hs >= z) & (hs < z + 0.1)).sum() < 3 for z in low_slices]))
                 fr = [r_[k] for r_ in self.flutters for k in inner if k in r_]
                 flutter = _robust_std(fr) if len(fr) >= 8 else 0.0      # bins seen in both scans
                 # a hanging sheet's folds are bounded; shelves / stalls / trolleys are rougher (the toy
@@ -235,10 +259,11 @@ class CurtainDetector:
                     c['cur_w_wavy'] * _norm(wavy, c['cur_wavy_lo'], c['cur_wavy_hi'])
                     + c['cur_w_thick'] * _norm(thick, c['cur_thick_lo'], c['cur_thick_hi'])
                     + c['cur_w_pen'] * _norm(pen, c['cur_pen_lo'], c['cur_pen_hi'])
-                    + c['cur_w_flutter'] * _norm(flutter, c['cur_flutter_lo'], c['cur_flutter_hi']))
+                    + c['cur_w_flutter'] * _norm(flutter, c['cur_flutter_lo'], c['cur_flutter_hi'])
+                    + c['cur_w_open'] * _norm(open_below, c['cur_open_lo'], c['cur_open_hi']))
                 sf = Surface(t=t, dist=float(n @ cen), bearing=float(math.atan2(n[1], n[0])),
                              centre=(float(cen[0]), float(cen[1])), width=float(along[j] - along[i]),
-                             wavy=wavy, thick=thick, pen=pen, flutter=flutter, tall=tall, score=score,
+                             wavy=wavy, thick=thick, pen=pen, flutter=flutter, tall=tall, open_below=open_below, score=score,
                              n_bins=len(win), axis=(float(d[0]), float(d[1])))
                 seg_wins.append((float(along[i]), float(along[j]), sf))
                 if nearest is None or abs(cang) < nearest[0]:
@@ -327,10 +352,10 @@ class CurtainPass:
                 return True
         return False
 
-    def wants(self, t, pose, surf, confident, last_resort, suspect=False):
-        """confident: lidar says cloth (persistent) -> camera, else lidar + touch test;
-        suspect: slightly cloth-like (persistent) and last_resort: stuck in front of a tall
-        surface -> the camera alone decides (no push without its 'yes')."""
+    def wants(self, t, pose, surf, confident, last_resort, suspect=False, hanging=False):
+        """hanging: cloth-like AND open below the hem (persistent) -> camera, else lidar + touch test;
+        confident (texture only), suspect and last_resort (stuck in front of a tall surface) ->
+        the camera alone decides (no push without its 'yes')."""
         c = self.c
         if (self.active or c['curtain'] not in ('pass', 'detect') or surf is None or t < self.cooldown_until
                 or self.attempts >= c['cur_max_attempts'] or surf.dist > c['cur_detect_m']
@@ -339,11 +364,11 @@ class CurtainPass:
         w_xy = G.body_to_world(np.array([surf.centre]), pose)[0]
         if self._marked(w_xy):
             return None
-        if confident:
+        if hanging:
             return 'lidar'
         if t < self.cam_down_until:
             return None                    # camera not answering: a camera-only start is pointless
-        if suspect:
+        if confident or suspect:
             return 'suspect'
         if last_resort and surf.tall >= c['cur_tall_min']:
             return 'last_resort'

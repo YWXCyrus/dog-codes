@@ -79,7 +79,7 @@ tilt_resume_deg: 30                  # ... until below this, then it drives on b
 tilt_latch_deg: 60                   # above: the dog is going over - stopped until restart
 
 # ---- grid (spec section 8) ----
-cell_m: 1.0
+cell_m: 1.02                         # booklet v6.3 E: cell centres 1.02 m apart (arena frame: +X start heading, +Y left)
 
 # ---- QR approach (rc/qr.py; needs perception/perception.launch.py running) ----
 qr_approach: true                    # go to a QR that perception located but could not read
@@ -112,7 +112,7 @@ qr_blacklist_m: 0.8                  # a failed target is not tried again within
 
 # ---- curtain (rc/curtain.py; spec 9.4: lidar candidate AND camera AND touch test) ----
 curtain: pass                        # off | detect (log only) | pass
-cur_h_lo: 0.30                       # surface heights used (above the floor) ...
+cur_h_lo: 0.30                       # surface profile + features from these heights (calibrated on the real runs) ...
 cur_h_hi: 1.20
 cur_max_r: 3.0
 cur_detect_m: 1.6                    # candidate only this close (base_link -> surface)
@@ -122,21 +122,30 @@ cur_min_width_m: 0.40
 cur_win_m: 0.80                      # scored in windows this wide along a surface (a curtained doorway in a wall)
 cur_seg_jump_m: 0.12
 cur_corner_m: 0.06                   # a profile bending more than this is two walls (corner), split
-cur_tall_top_m: 1.0                  # a curtain covers cur_h_lo..this ...
+cur_cloth_lo: 0.55                   # a hanging sheet covers cur_cloth_lo..cur_tall_top_m (booklet: bar ~1 m, hem ~0.45 m)
+cur_tall_top_m: 0.95
+cur_low_lo: 0.10                     # 'open below': no return ON the surface in cur_low_lo..cur_hem_max
+cur_hem_max: 0.40                    # (booklet photo: hem ~0.45 m; a wall reaches the floor)
+cur_low_vis_deg: 20.0                # lowest lidar beam ahead (-7 deg - 15 deg mount): low band visible from ~0.75 m
 cur_tall_min: 0.80                    # ... in at least this share of 0.1 m slices (else score 0)
-cur_wavy_lo: 0.020                     # feature -> 0..1: lo = what real panels reach, hi = clearly cloth
-cur_wavy_hi: 0.045
-cur_wavy_max: 0.055                  # rougher than this is clutter (shelves, trolley), not a hanging sheet
-cur_thick_lo: 0.036
-cur_thick_hi: 0.070
-cur_pen_lo: 0.30
-cur_pen_hi: 0.60
-cur_flutter_lo: 0.020
-cur_flutter_hi: 0.040
+cur_wavy_lo: 0.050                     # feature -> 0..1: lo ~ p95-p98 of real tall surfaces (9 runs, 2026-11-22/23)
+cur_wavy_hi: 0.070
+cur_wavy_max: 0.070                  # rougher than this is clutter (shelves, trolley), not a hanging sheet
+cur_thick_lo: 0.063
+cur_thick_hi: 0.090
+cur_pen_lo: 0.47
+cur_pen_hi: 0.80
+cur_flutter_lo: 0.039
+cur_flutter_hi: 0.070
 cur_w_wavy: 0.35
 cur_w_thick: 0.20
 cur_w_pen: 0.25
 cur_w_flutter: 0.20
+cur_w_open: 0.50                     # open below the hem: the strongest cue (booklet curtain)
+cur_open_lo: 0.50                    # open_below -> 0..1 from here (real panels / props: <= 0.5, 9 runs) ...
+cur_open_hi: 0.90                    # ... to here (booklet curtain: ~1)
+cur_open_push: 0.60                  # push without the camera only if seen open below >= this ...
+cur_open_persist: 2                  # ... in this many of the persistent scans
 cur_score_thr: 0.15                  # cloth-like: camera, else lidar + touch test (real walls: 0 in 7 runs)
 cur_suspect_thr: 0.05                # slightly cloth-like: camera only (real runs: 1 per ~7 min)
 cur_persist_k: 3                     # cloth-like in k of the last n scans

@@ -45,7 +45,8 @@ with the controller - start-up sends nothing to the dog.
    (10 deg) -> stop, turn on the spot until below `turn_done_deg` (4 deg; slowing to 0.2 rad/s in the
    last 20 deg), then walk again. The guard drops the turn of any command that still does both
    (`walk_no_turn` in the logs = a driver path was missed).
-   Grid: start (0,0), +y = the start heading ("N"), +x = right, 1 m cells.
+   Grid = the arena frame of booklet v6.3 E: start cell (0,0), +X = the start heading ("N"), +Y = its
+   left, cell centres 1.02 m apart; cell (i,j) is at (1.02 i, 1.02 j) (status `pos`, the value to report).
    BLOCKED (no free lane): turn on the spot ONE way until a lane is free `blocked_confirm_n` (3)
    decisions in a row; blocked again within `blocked_memory_s` (5 s) keeps the direction and the
    turned angle (no left-right-left dithering); a full circle without a lane -> HOLD `blocked`.
@@ -151,17 +152,21 @@ Events in `decisions.jsonl`: `curtain: start (why lidar|suspect|last_resort, fea
 camera_yes / camera_no / lineup / push / through / passed / touch_wall / wall / ...`.
 
 **Detection** (every scan): the surface ahead is scored in 0.8 m windows (a curtained doorway is a
-patch of a panel wall), only if it is **tall** (returns on the surface from 0.3 to 1.0 m: a hanging
-sheet) and seen within 50 deg of square. Features: folds (`wavy`), texture (`thick`), see-through
-(`pen`), flutter (offsets from each scan's own fitted line, compared scan to scan - the dog's motion
-cancels). Clutter is rejected: rougher than a sheet (`cur_wavy_max`) or a plane that changes from scan
-to scan (`cur_persist_deg`: the toy market stall + wire trolley). Starts:
-- `lidar` (score >= 0.15 on the same plane in 3 of 5 scans): camera; no answer -> touch test anyway.
-- `suspect` (score >= 0.05) and `last_resort` (BLOCKED / no new cell for 40 s, tall surface ahead):
-  **camera only** - no push without its "yes".
-Thresholds from the real runs of 2026-11-22/23 (7 runs, ~3100 scans with a surface within 1.6 m):
-0 `lidar` starts, 1 `suspect` start per ~7 min. **No real curtain has been recorded yet** - the
-upper (`*_hi`) values are estimates; the camera and the touch test carry the decision.
+patch of a panel wall), only if it is a **hanging sheet** (returns on the surface line in 0.55-0.95 m:
+booklet v6.3 D.4, cloth hung from a bar at ~1 m) seen within 50 deg of square. The strongest cue is
+**open below** (`open_below`): no return on the surface line in 0.10-0.40 m - the booklet curtain's
+hem is ~0.45 m, a wall reaches the floor (measured from ~0.75 m away, where the lowest beam reaches).
+Texture adds a little: folds (`wavy`), thickness, see-through (`pen`), flutter (offsets from each
+scan's own fitted line, scan to scan - the dog's motion cancels). Clutter is rejected: rougher than a
+sheet (`cur_wavy_max`) or a plane that changes from scan to scan (the toy market stall + trolley).
+Starts:
+- `lidar`: cloth-like on the same plane in 3 of 5 scans AND open below (>= 0.6 in 2 of them):
+  camera; no answer -> touch test anyway. The only start that may push without the camera.
+- `suspect` (texture only, or score >= 0.05) and `last_resort` (BLOCKED / no new cell for 40 s, tall
+  surface ahead): **camera only** - no push without its "yes" (a floor-length curtain lands here).
+Thresholds from 9 real runs of 2026-11-22/23 (9.3 min of driving): texture `*_lo` at ~p95-p98 of
+real tall surfaces, `open_below` <= 0.5 on every real surface. Result: 0 `lidar` starts, 3 camera
+questions (~4 s each). **No real curtain has been recorded yet** - check it on the practice arena.
 
 **Touch test** (the final word): pushing at 0.12 m/s, progress measured by FAST-LIO when it is usable
 (feet slip against a wall, leg odometry would still count) else leg odometry; < 0.04 m in 2 s = rigid

@@ -55,10 +55,11 @@ def probe(bag, cfg, t_from=0.0, t_to=1e9, frames=False):
             d['t'] = round(t, 1)
             d['confident'] = det.confident()
             d['suspect'] = det.suspect()
+            d['hanging'] = det.hanging()
             rows.append(d)
             if frames:
                 print('t %6.1f  %s%s' % (t, '  '.join('%s %s' % (k, d[k]) for k in
-                                                     ('dist', 'bearing_deg', 'width', 'tall', 'wavy', 'thick', 'pen', 'flutter', 'score')),
+                                                     ('dist', 'bearing_deg', 'width', 'tall', 'open_below', 'wavy', 'thick', 'pen', 'flutter', 'score')),
                                           '  CANDIDATE' if d['confident'] else ''))
         if t > t_to:
             break
@@ -84,7 +85,7 @@ def main():
     near = [r for r in allrows if r['dist'] <= cfg['cur_detect_m']]
     if near:
         print('\nwithin %.1f m, all bags (%d scans):   p50     p90     p99     max' % (cfg['cur_detect_m'], len(near)))
-        for k in ('tall', 'wavy', 'thick', 'pen', 'flutter', 'score'):
+        for k in ('tall', 'open_below', 'wavy', 'thick', 'pen', 'flutter', 'score'):
             v = np.array([r[k] for r in near])
             print('  %-8s %s' % (k, '  '.join('%6.4f' % x for x in (np.percentile(v, 50), np.percentile(v, 90),
                                                                   np.percentile(v, 99), v.max()))))

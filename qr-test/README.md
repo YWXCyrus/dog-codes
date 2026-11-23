@@ -23,13 +23,13 @@ python3 qr_test.py --group-id <registered id> live --post     # really POSTs to 
 `--post` refuses the placeholder group id. Only the latest submission per task id counts on the
 server, so do not post test codes on competition day.
 
-## JSON sent for a QR (reporter.py, booklet v5.1 section F)
+## JSON sent for a QR (reporter.py, booklet v6.3 section E)
 ```json
 {"group_id": "<registered id>", "task_id": "M04", "task_type": "qr", "scene_type": "",
  "label": "", "pos": null, "message": "<decoded text, exactly>"}
 ```
-POST to `http://192.168.10.141:8001/task_report`. If the text names a room (kitchen, market,
-workshop, clinic, cleaning_room) the mission also uses it as the M05 survivor room.
+POST to `http://192.168.10.141:8001/task_report`. If the text names a room (one of the 8 scene types of booklet v6.3, or a
+synonym: 'gym' -> fitness_centre) the mission also uses it as the M05 survivor room.
 **Check this format against the booklet** - it is taken from the existing reporter code.
 
 ## How close the dog must be (selftest, 2026-11-23)
