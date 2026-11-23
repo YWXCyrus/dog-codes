@@ -62,6 +62,10 @@ class Driver:
         self.turn_dir = 0
         self.turn_t = -1e9
         self.blocked_turned = 0.0
+        self.blocked_left_t = -1e9      # when BLOCKED last ended (blocked_memory_s)
+        self.blocked_dir = 0            # BLOCKED turn direction, kept across short re-entries
+        self.free_streak = 0            # decisions in a row with a free lane in the same direction
+        self.streak_yaw = None
         self.last_yaw = None
         self.last_new_cell_t = None
         self.prog = collections.deque()
@@ -274,18 +278,19 @@ class Driver:
             if lane is not None:
                 self.target_yaw = G.wrap(yaw + lane.heading)
                 self.target_t = t
+        # a lane must be free blocked_confirm_n decisions in a row (same direction) before BLOCKED ends:
+        # 061517 - single-scan flickers alternately left and right made the dog swing back and forth
         if lane is None:
-            if self.mode != BLOCKED:
-                self.mode = BLOCKED
-                self.blocked_turned = 0.0
-                best = max(di.lanes, key=lambda l: l.free_dist)
-                self.turn_dir = 1 if best.heading >= 0 else -1
-                self._ev(t, mode=BLOCKED)
-            self.blocked_turned += abs(dyaw)
-            if self.blocked_turned > 2 * math.pi:
-                self._hold(t, 'blocked')
-                return Cmd()
-            return Cmd(0.0, self.turn_dir * c['turn_wz'])
+            self.free_streak, self.streak_yaw = 0, None
+        else:
+            h = G.wrap(yaw + lane.heading)
+            same = self.streak_yaw is not None and abs(G.wrap(h - self.streak_yaw)) <= math.radians(20.0)
+            self.free_streak = self.free_streak + 1 if same else 1
+            self.streak_yaw = h
+        if lane is None or (self.mode == BLOCKED and self.free_streak < c['blocked_confirm_n']):
+            return self._blocked(di, dyaw)
+        if self.mode == BLOCKED:
+            self.blocked_left_t = t
         # turn on the spot OR walk straight, never both (2026-11-23: slips at ledges while doing both):
         # heading error > head_err_turn_deg -> TURN until it is below turn_done_deg, then walk with wz = 0
         err = G.wrap(self.target_yaw - yaw)
@@ -310,6 +315,28 @@ class Driver:
         k = max(0.0, min(1.0, (f0 - 0.8) / 1.2))
         vx = c['cruise_vx_min'] + (c['cruise_vx'] - c['cruise_vx_min']) * k
         return Cmd(vx, 0.0)
+
+    def _blocked(self, di, dyaw):
+        """No (confirmed) free lane: turn on the spot one way. Blocked again within blocked_memory_s
+        keeps the direction and the turned angle, so flickering lanes cannot make it swing back and
+        forth; a full circle without a lane -> HOLD blocked."""
+        c, t = self.c, di.t
+        if self.mode != BLOCKED:
+            if t - self.blocked_left_t > c['blocked_memory_s'] or self.blocked_dir == 0:
+                self.blocked_turned = 0.0
+                if self.mode == TURN and self.turn_dir:
+                    self.blocked_dir = self.turn_dir          # already turning: keep going that way
+                else:
+                    best = max(di.lanes, key=lambda l: l.free_dist)
+                    self.blocked_dir = 1 if best.heading >= 0 else -1
+            self.mode = BLOCKED
+            self._ev(t, mode=BLOCKED)
+        self.turn_dir = self.blocked_dir
+        self.blocked_turned += abs(dyaw)
+        if self.blocked_turned > 2 * math.pi:
+            self._hold(t, 'blocked')
+            return Cmd()
+        return Cmd(0.0, self.blocked_dir * c['turn_wz'])
 
     def _turn(self, err, wz_max, direction=None):
         """On-the-spot turn; slows to turn_wz_min in the last turn_slow_deg (the dog answers ~0.3 s

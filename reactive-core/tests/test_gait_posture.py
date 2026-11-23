@@ -3,8 +3,15 @@ import pytest
 from rc import config
 from rc import gait as Gt
 from rc import posture as P
+from rc.guard import Cmd
 
 CFG = config.load()
+
+
+def test_simple_cmd_qos_matches_the_bridge():
+    # the only /simple_cmd subscriber (lite3_domain_bridge_1) is TRANSIENT_LOCAL: a VOLATILE publisher
+    # is incompatible and every gait code was dropped (run 060242 warning)
+    assert CFG['simple_cmd_qos'] == 'transient_local'
 
 
 def drive(seq, gyro=0.3, t_end=30.0, dt=0.05):
@@ -27,10 +34,11 @@ def names(codes):
 
 
 def test_enter_ai_sequence_passes():
+    # 2026-11-23 on the dog: the forward axis only works in AI when the control mode is manual
     st, codes, cmds, t = drive(Gt.GaitSequencer(Gt.ENTER_AI, CFG))
     assert st == 'done'
-    assert names(codes) == ['enter_ai', 'ai_basic']
-    assert codes[1][0] - codes[0][0] >= 2.0                 # waits between codes
+    assert names(codes) == ['manual', 'enter_ai', 'ai_basic']
+    assert codes[2][0] - codes[1][0] >= 2.0                 # waits between Enter AI and AI Basic
     assert any(c.wz > 0 for c in cmds)                       # the turn test turned
 
 
@@ -43,7 +51,49 @@ def test_enter_ai_fails_without_response():
 def test_exit_ai_sequence():
     st, codes, _, _ = drive(Gt.GaitSequencer(Gt.EXIT_AI, CFG))
     assert st == 'done'
-    assert names(codes) == ['exit_ai', 'move_mode', 'rug_general', 'rug_general']
+    # navigation (auto) mode back on only AFTER Exit AI (it cannot be switched on inside AI)
+    assert names(codes) == ['exit_ai', 'move_mode', 'rug_general', 'rug_general', 'auto']
+
+
+def test_turn_test_gives_the_dog_time_to_start():
+    # 060242: from standing the dog needs ~0.5 s before it turns; the test window must allow that
+    assert CFG['test_s'] >= 1.5
+
+
+def test_axis_values_from_a_command():
+    c = CFG
+    assert Gt.axis_values(Cmd(0.0, 0.0), c) == (0, 0)
+    fwd, turn = Gt.axis_values(Cmd(0.15, 0.0), c)
+    assert fwd == round(c['ai_fwd_dz'] + c['ai_fwd_gain'] * 0.15) and turn == 0
+    # our +wz turns LEFT, the dog's turn axis is positive to the RIGHT
+    fwd, turn = Gt.axis_values(Cmd(0.0, 0.25), c)
+    assert fwd == 0 and turn == -round(c['ai_turn_dz'] + c['ai_turn_gain'] * 0.25)
+    fwd, turn = Gt.axis_values(Cmd(0.0, -0.25), c)
+    assert turn == round(c['ai_turn_dz'] + c['ai_turn_gain'] * 0.25)
+    assert Gt.axis_values(Cmd(5.0, 9.0), c) == (32767, -32767)          # clamped to the axis range
+    assert Gt.axis_values(Cmd(-0.2, 0.0), c) == (0, 0)                   # never reverse
+
+
+def test_axis_values_match_the_hand_tests():
+    # 2026-11-23: forward 25000 walked ~1 m in 3 s; turn 15000 turned ~30-45 deg in 1.5 s
+    fwd, _ = Gt.axis_values(Cmd(0.33, 0.0), CFG)
+    _, turn = Gt.axis_values(Cmd(0.0, -0.45), CFG)
+    assert fwd == pytest.approx(25000, rel=0.1) and turn == pytest.approx(15000, rel=0.1)
+
+
+def test_ai_state_follows_the_codes_actually_sent():
+    s = Gt.AiAxis(CFG)
+    assert not s.active and s.messages(Cmd(0.15, 0.0)) == []
+    s.on_code(Gt.CODES['manual'])
+    assert not s.active
+    s.on_code(Gt.CODES['enter_ai'])
+    assert s.active
+    msgs = s.messages(Cmd(0.15, 0.0))
+    # both axes every time (forward only moved the dog when the turn axis came with it)
+    assert [code for code, _ in msgs] == [Gt.CODES['fwd_axis'], Gt.CODES['turn_axis']]
+    assert msgs[0][1] > 0 and msgs[1][1] == 0
+    s.on_code(Gt.CODES['exit_ai'])
+    assert not s.active and s.messages(Cmd(0.15, 0.0)) == []
 
 
 def test_codes_respect_gap():

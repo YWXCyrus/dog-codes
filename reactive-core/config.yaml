@@ -60,7 +60,9 @@ turn_slow_deg: 20                    # below this heading error the turn slows t
 head_err_turn_deg: 10                # walking straight: heading error above this -> stop, turn on the spot
 turn_done_deg: 4                     # ... until the error is below this (also the stairs approach)
 commit_s: 2.0
-wall_side: left                      # left | right (arenas are mirrored)
+blocked_confirm_n: 3                 # BLOCKED ends only when a lane is free this many decisions in a row (061517: one-scan flickers -> dither)
+blocked_memory_s: 5.0                # BLOCKED again within this: keep the turn direction and the turned angle (no left-right-left)
+wall_side: left                     # left | right (arenas are mirrored)
 wall_dist_m: 0.60
 side_switch_s: 60.0                  # no new grid cell for this long -> switch wall side
 progress_s: 3.0
@@ -105,10 +107,17 @@ settle_s: 1.0
 settle_vel: 0.05
 stand_timeout_s: 15.0
 test_wz: 0.30                        # start-up / gait turn test
-test_s: 1.0
+test_s: 1.5                          # from standing the dog needs ~0.5 s to start turning (060242)
 test_ratio: 0.5
 simple_cmd_gap_s: 0.4
-simple_cmd_qos: volatile               # volatile (worked in trial 1, session 3) | transient_local (if codes do not arrive)
+simple_cmd_qos: transient_local      # the /simple_cmd bridge (lite3_domain_bridge_1) is TRANSIENT_LOCAL: volatile codes were dropped
+# AI state (stairs): the dog ignores /cmd_vel; it is driven by axis commands on /simple_cmd (value in
+# 'size') at cmd_rate_hz, both axes every time, control mode manual (2026-11-23 hand tests).
+# axis value = dead zone + gain * speed; gains from forward 25000 ~ 0.33 m/s, turn 15000 ~ 0.45 rad/s (rough)
+ai_fwd_dz: 6553
+ai_fwd_gain: 56000                   # per m/s
+ai_turn_dz: 9553
+ai_turn_gain: 12000                  # per rad/s
 
 # ---- viewer / recording (spec sections 8b, 11) ----
 viewer: true

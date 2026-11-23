@@ -123,6 +123,55 @@ def mixed(cmds):
     return [(round(c.vx, 3), round(c.wz, 3)) for c in cmds if c.vx > 0.0 and c.wz != 0.0]
 
 
+def ring(r=0.5, gaps=(), n=180, half=45):
+    """Obstacle ring around the dog (body frame) with open sectors at the given headings (deg)."""
+    a = np.radians(np.linspace(-180, 180, n, endpoint=False))
+    keep = np.ones(n, bool)
+    for g in gaps:
+        keep &= np.abs((np.degrees(a) - g + 180) % 360 - 180) > half
+    return np.stack([r * np.cos(a[keep]), r * np.sin(a[keep])], axis=1)
+
+
+def test_blocked_flickering_lane_keeps_one_turn_direction_then_holds():
+    # 061517: boxed in, a lane flickered free for single scans alternately left and right; every
+    # re-entry into BLOCKED re-picked the direction -> left, back, left, back, never a full circle
+    def obs(loop):
+        k = int(round(loop.t / 0.1))
+        return ring(gaps=(60,) if k % 6 == 0 else (-60,) if k % 6 == 3 else ())
+    lp = Loop(cfg(), obs=obs)
+    lp.run(2 * math.pi / cfg()['turn_wz'] + 6.0)
+    turning = [c.wz for c in lp.cmds if c.wz != 0.0]
+    assert turning and (all(w > 0 for w in turning) or all(w < 0 for w in turning))
+    assert lp.d.mode == 'HOLD' and lp.d.hold_reason == 'blocked'
+    assert all(c.vx == 0.0 for c in lp.cmds)
+
+
+def test_blocked_leaves_only_for_a_lane_free_several_decisions():
+    c = cfg()
+    lp = Loop(c, obs=lambda loop: ring() if loop.t < 1.0 - 1e-6 else ring(gaps=(0,)))
+    lp.run(1.0)
+    assert lp.d.mode == 'BLOCKED'
+    lp.step()                                            # the lane is free for the first time
+    assert lp.d.mode == 'BLOCKED'
+    lp.run(0.1 * c['blocked_confirm_n'])
+    assert lp.d.mode in ('TURN', 'CRUISE')
+
+
+def test_blocked_again_soon_keeps_direction_and_turned_angle():
+    c = cfg()
+    state = {'open': False}
+    lp = Loop(c, obs=lambda loop: ring(gaps=(0,)) if state['open'] else ring())
+    lp.run(2.0)
+    d0, turned0 = lp.d.blocked_dir, lp.d.blocked_turned
+    assert lp.d.mode == 'BLOCKED' and turned0 > 0
+    state['open'] = True
+    lp.run(1.0)                                          # free long enough: leaves BLOCKED
+    assert lp.d.mode != 'BLOCKED'
+    state['open'] = False
+    lp.run(0.3)                                          # blocked again within blocked_memory_s
+    assert lp.d.mode == "BLOCKED" and lp.d.blocked_dir == d0 and lp.d.blocked_turned >= turned0
+
+
 def test_heading_error_over_head_err_turns_on_the_spot_small_one_walks_straight():
     c = cfg()
     lp = Loop(c)
@@ -237,8 +286,8 @@ def test_full_stairs_sequence():
     st, tilt, pitch = stairs_world()
     lp = Loop(cfg(), stairs=st, tilt=tilt, pitch=pitch)
     lp.run(80.0)
-    assert lp.codes[:2] == ['enter_ai', 'ai_basic']
-    assert lp.codes[2:] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general']
+    assert lp.codes[:3] == ['manual', 'enter_ai', 'ai_basic']
+    assert lp.codes[3:] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general', 'auto']
     phases = [p for _, p in lp.modes]
     for ph in ('APPROACH', 'ENTER', 'CLIMB', 'DESCEND', 'EXIT'):
         assert ph in phases
@@ -318,7 +367,7 @@ def test_stairs_ai_ignores_cmd_aborts_to_hold():
     st, tilt, pitch = stairs_world()
     lp = Loop(cfg(), stairs=st, tilt=tilt, pitch=pitch, gyro_gain=0.0)
     lp.run(40.0)
-    assert lp.codes[:2] == ['enter_ai', 'ai_basic']
+    assert lp.codes[:3] == ['manual', 'enter_ai', 'ai_basic']
     assert 'exit_ai' in lp.codes
     assert lp.d.mode == 'HOLD' and lp.d.hold_reason in ('ai_no_response', 'rug_no_response')
     assert lp.pose[0] < 2.0                                  # never walked onto the stairs
@@ -346,7 +395,7 @@ def test_resume_after_hold_in_enter_exits_ai():
     lp.d.resume(lp.t)
     assert lp.d.phase == 'EXIT'
     lp.run(10.0)
-    assert lp.codes[-4:] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general']
+    assert lp.codes[-5:] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general', 'auto']
 
 
 def test_unsure_looks_then_holds():
