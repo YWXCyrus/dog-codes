@@ -190,6 +190,11 @@ class Core:
             self.last_drive_t = t
             mem = self._mem_body(t)
             lanes = L.evaluate(self.scan.obs, self.scan.drops, self.c, extra=mem)
+            if not any(l.free for l in lanes) and self.c['lane_w_min'] < self.c['lane_w']:
+                # tight spot (1 m start bay with the dog off-centre, narrow door): try the minimum
+                # lane width before turning on the spot (no turn guard: turning there hits the walls)
+                lanes = L.evaluate(self.scan.obs, self.scan.drops, self.c, width=self.c['lane_w_min'],
+                                   extra=mem)
             di = DriverInput(t=t, lanes=lanes, obs=self.scan.obs, mem=mem,
                              pose=self.odom.pose or (0.0, 0.0, 0.0), odom_ok=self.odom_ok,
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
