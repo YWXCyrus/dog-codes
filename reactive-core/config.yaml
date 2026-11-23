@@ -53,9 +53,12 @@ rate_hz: 10.0                        # driver decisions
 cmd_rate_hz: 20.0                    # command output
 cruise_vx: 0.20
 cruise_vx_min: 0.20                   # = cruise_vx: constant speed
+# turn on the spot OR walk straight, never both (2026-11-23: slips at ledges while doing both)
 turn_wz: 0.40
-walk_wz_max: 0.10                    # small steering while walking
-head_err_turn_deg: 10                # larger heading error: turn on the spot first
+turn_wz_min: 0.20                    # turn rate in the last turn_slow_deg (the dog answers ~0.3 s late)
+turn_slow_deg: 20                    # below this heading error the turn slows towards turn_wz_min
+head_err_turn_deg: 10                # walking straight: heading error above this -> stop, turn on the spot
+turn_done_deg: 4                     # ... until the error is below this (also the stairs approach)
 commit_s: 2.0
 wall_side: left                      # left | right (arenas are mirrored)
 wall_dist_m: 0.60
@@ -92,6 +95,7 @@ stair_vx_down: 0.10
 stair_flat_exit_m: 1.0
 stair_max_s: 90.0
 stair_no_progress_s: 3.0
+stair_hold_err_deg: 15               # climb / descend walk straight, never turn on a step: heading error above this -> HOLD (stays in AI)
 
 # ---- start-up / posture (spec section 4) ----
 knee_names: [LF_Joint_2, RF_Joint_2, LB_Joint_2, RB_Joint_2]

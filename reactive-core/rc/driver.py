@@ -286,27 +286,39 @@ class Driver:
                 self._hold(t, 'blocked')
                 return Cmd()
             return Cmd(0.0, self.turn_dir * c['turn_wz'])
+        # turn on the spot OR walk straight, never both (2026-11-23: slips at ledges while doing both):
+        # heading error > head_err_turn_deg -> TURN until it is below turn_done_deg, then walk with wz = 0
         err = G.wrap(self.target_yaw - yaw)
         if self.mode in (BLOCKED, TURN):
-            if abs(err) > math.radians(10.0):
+            if abs(err) > math.radians(c['turn_done_deg']):
                 if self.mode == BLOCKED:
                     self.mode = TURN
-                    self.turn_dir = 1 if err > 0 else -1
                     self.turn_t = t
-                return Cmd(0.0, self.turn_dir * c['turn_wz'])
+                    self.turn_dir = 1 if err > 0 else -1
+                elif abs(err) < math.pi / 2:
+                    self.turn_dir = 1 if err > 0 else -1      # overshoot: turn back, not round a circle
+                return self._turn(err, c['turn_wz'])
             self.mode = CRUISE
         if abs(err) > math.radians(c['head_err_turn_deg']):
             if self.mode != TURN or t - self.turn_t > c['commit_s']:
                 self.turn_dir = 1 if err > 0 else -1
                 self.turn_t = t
             self.mode = TURN
-            return Cmd(0.0, self.turn_dir * c['turn_wz'])
+            return self._turn(err, c['turn_wz'])
         self.mode = CRUISE
         f0 = self._lane_near(di.lanes, 0.0).free_dist
         k = max(0.0, min(1.0, (f0 - 0.8) / 1.2))
         vx = c['cruise_vx_min'] + (c['cruise_vx'] - c['cruise_vx_min']) * k
-        wz = max(-c['walk_wz_max'], min(c['walk_wz_max'], 1.0 * err))
-        return Cmd(vx, wz)
+        return Cmd(vx, 0.0)
+
+    def _turn(self, err, wz_max, direction=None):
+        """On-the-spot turn; slows to turn_wz_min in the last turn_slow_deg (the dog answers ~0.3 s
+        late, full speed to the last degree overshoots past turn_done_deg)."""
+        c = self.c
+        d = self.turn_dir if direction is None else direction
+        rate = wz_max * abs(err) / math.radians(c['turn_slow_deg'])
+        rate = max(min(c['turn_wz_min'], wz_max), min(wz_max, rate))
+        return Cmd(0.0, d * rate)
 
     # ---------------------------------------------------------------- stairs
     def _begin_approach(self, di):
@@ -362,17 +374,20 @@ class Driver:
                 return Cmd()
             err = G.wrap(s['yaw'] - yaw)
             dist = self._along(di.pose, s['edge'], s['yaw'])
+            # turn on the spot OR walk straight: error > 5 deg -> turn until below turn_done_deg
+            if abs(err) > math.radians(5.0):
+                s['turning'] = True
+            if s.get('turning'):
+                if abs(err) > math.radians(c['turn_done_deg']):
+                    return self._turn(err, 0.25, direction=1 if err > 0 else -1)
+                s['turning'] = False
             if dist <= c['stair_standoff_m']:
-                if abs(err) > math.radians(5.0):
-                    return Cmd(0.0, math.copysign(0.25, err))
                 self._start_seq(t, Gt.ENTER_AI, 'ENTER')
                 return Cmd()
-            if abs(err) > math.radians(5.0) and dist > c['stair_standoff_m'] + 0.3:
-                return Cmd(0.0, math.copysign(0.25, err))
             if t - s['t0'] > 30.0:
                 self._hold(t, 'stairs_approach')
                 return Cmd()
-            return Cmd(0.10, max(-0.15, min(0.15, err)))
+            return Cmd(0.10, 0.0)
 
         if self.phase in ('ENTER', 'EXIT', 'ABORT'):
             st_, cmd = self._run_seq(di)
@@ -429,8 +444,12 @@ class Driver:
                     return Cmd()
             else:
                 s['prog_d'], s['prog_t'] = None, t
+            # walk straight, never turn on a step; drifted too far -> HOLD in AI, the Captain lines it up
             err = G.wrap(s['yaw'] - yaw)
-            wz = max(-0.15, min(0.15, err))
+            if abs(err) > math.radians(c['stair_hold_err_deg']):
+                self._hold(t, 'stairs_heading', keep_stairs=True)
+                return Cmd()
+            wz = 0.0
             if self.phase == 'CLIMB':
                 if st.kind == 'down':
                     h = yaw + st.heading

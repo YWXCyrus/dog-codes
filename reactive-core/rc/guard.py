@@ -1,8 +1,12 @@
 """Guard (spec section 7): the last layer between every command and the dog.
 
-Order: stale feeds -> tilt -> no reverse -> FRONT STOP (raw scan only). Nothing else (2026-11-23:
-the turn sweep, the front slow zone and the tilt slow / push-through rules made the dog stall on
-the course; the speed of the dog matters more). Never invents motion: it only zeroes the command.
+Order: stale feeds -> tilt -> no reverse -> FRONT STOP (raw scan only) -> WALK OR TURN. Nothing else
+(2026-11-23: the turn sweep, the front slow zone and the tilt slow / push-through rules made the dog
+stall on the course; the speed of the dog matters more). Never invents motion: it only zeroes the command.
+
+Walk or turn (2026-11-23, the dog slipped at ledges while walking and turning at once): the driver
+never sends both; if a command still walks AND turns, the turn is dropped ('walk_no_turn' - a sign
+that some driver path was missed). After the front stop, so a blocked front leaves a pure turn.
 
 Tilt (flat ground and stairs alike; stair slope ~27 deg): above tilt_stop_deg the command is zeroed
 until the tilt is back below tilt_resume_deg, then the dog drives on by itself (no HOLD). Above
@@ -72,4 +76,7 @@ class Guard:
         if vx > 0.0 and self.front_dist(gi.obs_now) < c['stop_m']:
             vx = 0.0
             reasons.append('front_stop')
+        if vx > 0.0 and wz != 0.0:
+            wz = 0.0
+            reasons.append('walk_no_turn')
         return Cmd(vx, wz), reasons

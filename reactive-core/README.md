@@ -40,12 +40,17 @@ with the controller - start-up sends nothing to the dog.
    **"Ready. Press Enter to go"**. Nothing is sent to the dog during start-up.
 2. Enter: autonomous. Status line every ~2 s:
    `[  42.0s] CRUISE  cell (1,3) N  front 1.20 m  tilt 4.1  floor 0.33  odom ok  stairs none  wall left`
-   Driving: constant `cruise_vx` (0.20 m/s); heading error above `head_err_turn_deg` (10 deg) ->
-   turn on the spot, below it small steering while walking (max `walk_wz_max` 0.10 rad/s).
+   Driving: **turn on the spot OR walk straight, never both** (the dog slipped at ledges doing both).
+   Walking: constant `cruise_vx` (0.20 m/s), no steering. Heading error above `head_err_turn_deg`
+   (10 deg) -> stop, turn on the spot until below `turn_done_deg` (4 deg; slowing to 0.2 rad/s in the
+   last 20 deg), then walk again. The guard drops the turn of any command that still does both
+   (`walk_no_turn` in the logs = a driver path was missed).
    Grid: start (0,0), +y = the start heading ("N"), +x = right, 1 m cells.
 3. Stairs: confident stairs ahead -> APPROACH (square to the steps, 0.6 m short) -> ENTER
    (Enter AI -> AI Basic -> turn test) -> ALIGN -> CLIMB -> DESCEND -> EXIT (Exit AI -> Move Mode ->
    RUG general -> turn test) -> wall following continues. Unsure stairs: stop 2 s, look again.
+   Approach: turn on the spot when the stairs are > 5 deg off, walk straight otherwise. Climb and
+   descent: straight, no turning on a step; drifted more than `stair_hold_err_deg` (15) -> HOLD.
 4. **HOLD** (`*** HOLD: <reason> ... ***`): the dog stands still, the Captain may drive by
    controller, **Enter resumes** autonomous mode. Reasons:
 
@@ -58,6 +63,7 @@ with the controller - start-up sends nothing to the dog.
    | `ai_no_response` | AI Basic did not obey `/cmd_vel` (turn test); AI already exited -> Captain takes the stairs |
    | `rug_no_response` | after Exit AI the dog does not respond; Enter retries the exit sequence |
    | `stairs_no_progress`, `stairs_timeout`, `stairs_lost` | trouble on the stairs: the dog stays in AI Basic (never exits AI on a step) |
+   | `stairs_heading` | heading drifted > 15 deg on the stairs (no turning on a step): stays in AI Basic; line it up by controller, Enter resumes |
    | `tilt_latch` | tilt above 60 deg (the dog going over): latched until restart |
 
    Not a HOLD: tilt above 35 deg zeroes the command until the tilt is back below 30 deg, then the dog
@@ -83,7 +89,9 @@ the run folder. The ones to tune on the course:
 | `lio_radius_m` / `lio_time_s` / `lio_blind_m` | 3.0 / 30 / 0.50 | FAST-LIO map kept around the dog; points nearer than blind (own legs) never stored |
 | `lio_max_speed` / `lio_jump_m` | 1.0 / 0.50 | FAST-LIO pose faster / jumpier than this = diverged -> map off for the rest of the run |
 | `cruise_vx` / `cruise_vx_min` / `turn_wz` | 0.20 / 0.20 / 0.40 | speeds (min = max: constant forward speed) |
-| `head_err_turn_deg` / `walk_wz_max` | 10 / 0.10 | turn on the spot above this heading error; steering while walking |
+| `head_err_turn_deg` / `turn_done_deg` | 10 / 4 | walking straight: stop and turn on the spot above this heading error, until below the second |
+| `turn_wz_min` / `turn_slow_deg` | 0.20 / 20 | on-the-spot turns slow to this rate in the last degrees (the dog answers ~0.3 s late) |
+| `stair_hold_err_deg` | 15 | climb / descent walk straight; heading error above this -> HOLD `stairs_heading` |
 | `wall_side` | left | wall-following side (arenas are mirrored) |
 | `stop_m` | 0.24 | front stop, from the sensor (nose ~0.14 m ahead of it -> ~0.10 m gap); no slow zone. Walls at lidar height vanish inside `near_drop_m`, so in practice it stops at ~0.30 m |
 | `near_drop_m` | 0.30 | lidar returns closer than this to the sensor are dropped (zero-range blob; at 0.15 the front legs caused false front stops) |
