@@ -108,6 +108,63 @@ qr_max_attempts: 3                   # per run
 qr_cooldown_s: 15.0                  # after a failed attempt
 qr_blacklist_m: 0.8                  # a failed target is not tried again within this
 
+# ---- curtain (rc/curtain.py; spec 9.4: lidar candidate AND camera AND touch test) ----
+curtain: pass                        # off | detect (log only) | pass
+cur_h_lo: 0.30                       # surface heights used (above the floor) ...
+cur_h_hi: 1.20
+cur_max_r: 3.0
+cur_detect_m: 1.6                    # candidate only this close (base_link -> surface)
+cur_ahead_deg: 30.0                  # ... and this far off straight ahead
+cur_normal_deg: 50.0                 # surface normal this far off the heading at most (no squaring up to a wall walked past)
+cur_min_width_m: 0.40
+cur_win_m: 0.80                      # scored in windows this wide along a surface (a curtained doorway in a wall)
+cur_seg_jump_m: 0.12
+cur_corner_m: 0.06                   # a profile bending more than this is two walls (corner), split
+cur_tall_top_m: 1.0                  # a curtain covers cur_h_lo..this ...
+cur_tall_min: 0.80                    # ... in at least this share of 0.1 m slices (else score 0)
+cur_wavy_lo: 0.020                     # feature -> 0..1: lo = what real panels reach, hi = clearly cloth
+cur_wavy_hi: 0.045
+cur_wavy_max: 0.055                  # rougher than this is clutter (shelves, trolley), not a hanging sheet
+cur_thick_lo: 0.036
+cur_thick_hi: 0.070
+cur_pen_lo: 0.30
+cur_pen_hi: 0.60
+cur_flutter_lo: 0.020
+cur_flutter_hi: 0.040
+cur_w_wavy: 0.35
+cur_w_thick: 0.20
+cur_w_pen: 0.25
+cur_w_flutter: 0.20
+cur_score_thr: 0.15                  # cloth-like: camera, else lidar + touch test (real walls: 0 in 7 runs)
+cur_suspect_thr: 0.05                # slightly cloth-like: camera only (real runs: 1 per ~7 min)
+cur_persist_k: 3                     # cloth-like in k of the last n scans
+cur_persist_n: 5
+cur_persist_m: 0.35                  # ... with the window centres this close (same patch) ...
+cur_persist_deg: 8.0                 # ... and the surface normals this close (same plane: a sheet, not clutter)
+cur_last_resort_s: 40.0              # no new grid cell this long (or BLOCKED) + tall surface ahead -> ask the camera
+cur_vlm_wait_s: 8.0                  # camera answer (scene server ~3.5 s); none -> lidar + touch test
+cur_align_deg: 6.0                   # face the surface square (shortest way through the cloth)
+cur_lineup_m: 0.10                   # dog's line outside the cloth stretch: walk to a point this far inside it ...
+cur_standoff_m: 0.90                 # ... to this far out from it along the normal
+cur_span_frac: 0.85                  # neighbouring windows scoring this share of the best one widen the cloth stretch
+cur_body_half_m: 0.26                # the dog's line must meet the cloth this far inside its edges (half width + margin)
+cur_cam_retry_s: 60.0                # camera unanswered: no camera-only starts for this long
+cur_turn_clear_m: 0.42               # no turn on the spot with an obstacle nearer than this
+cur_approach_vx: 0.15
+cur_push_vx: 0.12                    # spec: creep <= 0.15 m/s; the guard front stop is relaxed only for this
+cur_sensor_x: 0.18678                # base_link -> lidar (front stop is measured from the lidar)
+cur_clear_m: 0.60                    # done when base_link is this far past the surface (body half 0.33 + margin)
+cur_stall_m: 0.04                    # touch test: less progress than this ...
+cur_stall_s: 2.0                     # ... in this long while pushing = rigid (a wall)
+cur_grace_s: 1.0
+cur_retreat_m: 0.15                  # after a wall verdict: back off this far (the ONLY reverse; 0 = off)
+cur_retreat_vx: 0.08
+cur_max_s: 45.0
+cur_max_attempts: 4
+cur_cooldown_s: 15.0
+cur_mark_m: 0.8                      # a touched wall / passed curtain is not tried again within this ...
+cur_mark_soft_m: 0.5                 # ... a camera 'no' / lost patch within this
+
 # ---- stairs (spec section 9) ----
 stairs: climb                        # off | detect | climb
 stair_rise_min: 0.08

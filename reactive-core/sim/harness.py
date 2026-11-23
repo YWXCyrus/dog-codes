@@ -25,12 +25,14 @@ class SimResult:
     max_support: float = 0.0
     end_pose: tuple = (0.0, 0.0, 0.0)
     guard_counts: dict = field(default_factory=dict)
+    asks: int = 0
     trace: list = field(default_factory=list)      # every 0.5 s: t, x, y, yaw, vx, wz, support, pitch, mode, phase, stairs
 
 
 def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0, dt=0.05,
-             resume_on_hold=False, verbose=False, qr_cam=None):
-    """qr_cam: optional sim.qrcam.QrCam (simulated camera + perception -> core.on_qr_event, ~6 Hz)."""
+             resume_on_hold=False, verbose=False, qr_cam=None, vlm=None):
+    """qr_cam: optional sim.qrcam.QrCam (simulated camera + perception -> core.on_qr_event, ~6 Hz).
+    vlm: optional sim.vlmsim.VlmSim answering the curtain camera questions (/quad/vlm_ask)."""
     dog = DogModel(world, *start, seed=seed, **(dog_kwargs or {}))
     lidar = Lidar(mount_xyz=cfg['mount_xyz'], mount_pitch_deg=cfg['mount_pitch_deg'], seed=seed)
     core = Core(cfg)
@@ -68,6 +70,12 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
         else:
             out = core.tick(t)
             cmd = out.cmd
+            if vlm is not None:
+                for q in out.asks:
+                    vlm.ask(q, dog, t)
+                for a in vlm.due(t):
+                    core.on_vlm_answer(a, t)
+            res.asks += len(out.asks)
             for c in out.codes:
                 dog.on_code(c, t)
             res.events.extend(out.events)

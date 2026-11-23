@@ -130,6 +130,45 @@ no_room_to_turn` and `qr_read: <text>`.
 - `--set qr_approach=false` turns it off. Simulator: `tests/test_qr.py` (simulated camera +
   perception, `sim/qrcam.py`): a 0.30 m-high QR 0.5 m off-axis 2.7 m away is read in ~20 s.
 
+### Curtain (`rc/curtain.py`, spec 9.4: lidar candidate AND camera AND touch test)
+Mode **CURTAIN**: `ALIGN` (square to the surface) -> `INSPECT` (camera question via perception
+`/quad/vlm_ask`, answer `/quad/vlm_answer`; perception must run) -> `LINEUP` (only if the dog's line
+would put its body on the door post: turn - walk to a point 0.9 m in front of the cloth - turn) ->
+`APPROACH` -> `PUSH` (guard front stop relaxed, 0.12 m/s straight) -> through, or `RETREAT` -> wall.
+Events in `decisions.jsonl`: `curtain: start (why lidar|suspect|last_resort, features) / ask_camera /
+camera_yes / camera_no / lineup / push / through / passed / touch_wall / wall / ...`.
+
+**Detection** (every scan): the surface ahead is scored in 0.8 m windows (a curtained doorway is a
+patch of a panel wall), only if it is **tall** (returns on the surface from 0.3 to 1.0 m: a hanging
+sheet) and seen within 50 deg of square. Features: folds (`wavy`), texture (`thick`), see-through
+(`pen`), flutter (offsets from each scan's own fitted line, compared scan to scan - the dog's motion
+cancels). Clutter is rejected: rougher than a sheet (`cur_wavy_max`) or a plane that changes from scan
+to scan (`cur_persist_deg`: the toy market stall + wire trolley). Starts:
+- `lidar` (score >= 0.15 on the same plane in 3 of 5 scans): camera; no answer -> touch test anyway.
+- `suspect` (score >= 0.05) and `last_resort` (BLOCKED / no new cell for 40 s, tall surface ahead):
+  **camera only** - no push without its "yes".
+Thresholds from the real runs of 2026-11-22/23 (7 runs, ~3100 scans with a surface within 1.6 m):
+0 `lidar` starts, 1 `suspect` start per ~7 min. **No real curtain has been recorded yet** - the
+upper (`*_hi`) values are estimates; the camera and the touch test carry the decision.
+
+**Touch test** (the final word): pushing at 0.12 m/s, progress measured by FAST-LIO when it is usable
+(feet slip against a wall, leg odometry would still count) else leg odometry; < 0.04 m in 2 s = rigid
+-> back off 0.15 m straight over the ground it just walked in on (**the only reverse in the code**,
+`cur_retreat_m=0` turns it off; turning with the nose on a wall would sweep the front corners into it)
+-> marked as a wall, wall following continues. A passed curtain / touched wall is not tried again
+within 0.8 m, a camera "no" within 0.5 m.
+
+**Practice day:** record the dog standing ~1 m in front of the real curtain and of a plain panel,
+then `python3 tools/curtain_probe.py runs/<curtain>/bag runs/<panel>/bag --frames` and set
+`cur_*_lo/hi` from what they show (`tests/test_curtain.py` keeps the real-wall regression).
+`--set curtain=detect` logs candidates without moving for them, `curtain=off` disables it.
+
+Simulator (`sim/lidar.py` cloth: folds, flutter, see-through; `sim/vlmsim.py`: camera answers;
+`tests/test_curtain.py`): corridor and curtained doorway head-on, -25 and +20 deg (line-up), camera
+ok / down / "no", a rigid look-alike (camera fooled: the touch test catches it, contact only while
+pushing), 0 collisions. Not passed (the dog does not push): a doorway it never faces within ~30 deg,
+and a lightly folded curtain with the camera down (looks like a wall to any lidar).
+
 ### Optional checks
 - `python3 run.py --live --gait-test ai_basic` — dog standing in open floor, e-stop held: start-up,
   Enter AI -> AI Basic -> turn test -> 1 s forward at 0.1 m/s -> Exit AI -> RUG general -> turn test,

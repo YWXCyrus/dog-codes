@@ -34,6 +34,9 @@ answer) and `run_logs/snaps/` (the camera picture behind each result).
   `qr_seen` (located, not read: `w`, `cx`, `cy`) and `qr_decoded` on `/quad/event`; reactive-core
   turns and steps towards the code and stands still in front of it until it is read. Codes mounted
   higher than ~0.45 m cannot be read from close up with the 20 deg down-tilted camera.
+- **Curtain camera check is answered by perception** (`/quad/vlm_ask` -> scene server ->
+  `/quad/vlm_answer`): reactive-core asks before pushing through a curtain. Without perception
+  running, reactive-core falls back to lidar + touch test (`reactive-core/README.md`, Curtain).
 - **Hazard positions are coarser:** `/quad/cloud` (frontier `cloud_proc`) is missing, so the
   distance to a sign falls back to ~0.75 m ahead of the dog.
 - **Room type (`scene_type`)** comes from the scene server; without an answer perception reports

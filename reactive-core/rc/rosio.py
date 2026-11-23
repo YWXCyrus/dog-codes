@@ -53,6 +53,10 @@ class RosIO:
         n.create_subscription(Odometry, '/odom', self.on_fastlio, SENSOR_QOS)
         n.create_subscription(Odometry, cfg['lio_topic'], self.on_lio, SENSOR_QOS)
         n.create_subscription(TFMessage, '/tf_static', self.on_tf_static, TF_STATIC_QOS)
+        # curtain camera check via perception (perception/perception.launch.py): not a dog command,
+        # so also in a dry run
+        self.ask_pub = n.create_publisher(String, '/quad/vlm_ask', 10)
+        n.create_subscription(String, '/quad/vlm_answer', self.on_vlm_answer, 10)
         if cfg['qr_approach']:
             # perception (perception/perception.launch.py) -> QR located / read, for the QR approach
             n.create_subscription(String, '/quad/event', self.on_quad_event, 20)
@@ -107,6 +111,21 @@ class RosIO:
         p, q = m.pose.pose.position, m.pose.pose.orientation
         with self.lock:
             self.core.on_lio((p.x, p.y, p.z), (q.x, q.y, q.z, q.w), time.monotonic())
+
+    def on_vlm_answer(self, m):
+        try:
+            d = json.loads(m.data)
+        except ValueError:
+            return
+        if isinstance(d, dict):
+            with self.lock:
+                self.core.on_vlm_answer(d, time.monotonic())
+
+    def send_asks(self, asks):
+        for a in asks:
+            s = String()
+            s.data = json.dumps(a)
+            self.ask_pub.publish(s)
 
     def on_quad_event(self, m):
         try:

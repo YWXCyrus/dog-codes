@@ -35,7 +35,8 @@ from rc import config  # noqa: E402
 RECORD_TOPICS = ['/livox/points', '/leg_odom', '/leg_odom2', '/odom', '/imu/data', '/joint_states',
                  '/nav_cmd_vel', '/cmd_vel', '/simple_cmd', '/tf_static', '/rc/status',
                  '/fastlio/odometry', '/livox/lidar', '/livox/imu',     # FAST-LIO output + its raw inputs
-                 '/quad/event', '/quad/report']                         # perception (QR approach, results)
+                 '/quad/event', '/quad/report',                         # perception (QR approach, results)
+                 '/quad/vlm_ask', '/quad/vlm_answer']                   # curtain camera check
 CAMERA_TOPIC = '/camera/color/image_raw'
 FEED_LOST_EXIT_S = 5.0
 
@@ -301,6 +302,7 @@ def main(argv=None):
                 ages = core.ages(t)
                 posture = core.posture
             io.send(out.cmd, out.codes)
+            io.send_asks(out.asks)
             for e in out.events:
                 e = dict(e, t=round(e.get('t', t) - t0, 2))      # core times are monotonic: make them run time
                 log(e)

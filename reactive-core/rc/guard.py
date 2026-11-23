@@ -1,6 +1,8 @@
 """Guard (spec section 7): the last layer between every command and the dog.
 
-Order: stale feeds -> tilt -> no reverse -> FRONT STOP (raw scan only) -> WALK OR TURN. Nothing else
+Order: stale feeds -> tilt -> no reverse -> FRONT STOP (raw scan only) -> WALK OR TURN.
+Curtain exceptions (rc/curtain.py, spec 9.4): PUSH relaxes the front stop at creeping speed;
+RETREAT (after a touch-test wall verdict only) allows <= cur_retreat_vx backwards, straight. Nothing else
 (2026-11-23: the turn sweep, the front slow zone and the tilt slow / push-through rules made the dog
 stall on the course; the speed of the dog matters more). Never invents motion: it only zeroes the command.
 
@@ -30,6 +32,8 @@ class GuardInput:
     ages: dict = field(default_factory=dict)       # feed name -> seconds since last arrival
     tilt_deg: float = 0.0                          # max(|roll|, |pitch|)
     t: float = None
+    push: bool = False                             # curtain PUSH (rc/curtain.py): front stop relaxed, vx capped
+    retreat: bool = False                          # curtain RETREAT after a wall verdict: slow reverse allowed
 
 
 class Guard:
@@ -70,10 +74,21 @@ class Guard:
             return Cmd(0.0, 0.0), ['tilt_stop']
 
         reasons = []
-        if vx < 0.0:
+        if vx < 0.0 and gi.retreat:
+            # the only reverse: <= cur_retreat_m straight back over the ground the dog just walked in
+            # on (curtain touch test said "wall"; turning with the nose on it would hit it)
+            vx = max(vx, -c['cur_retreat_vx'])
+            wz = 0.0
+        elif vx < 0.0:
             vx = 0.0
             reasons.append('no_reverse')
-        if vx > 0.0 and self.front_dist(gi.obs_now) < c['stop_m']:
+        if gi.push and vx > 0.0:
+            # curtain touch test (spec 9.4: "the guard front zone is relaxed only inside this mode"):
+            # the cloth is touched on purpose; creeping speed only
+            if vx > c['cur_push_vx']:
+                vx = c['cur_push_vx']
+                reasons.append('push_cap')
+        elif vx > 0.0 and self.front_dist(gi.obs_now) < c['stop_m']:
             vx = 0.0
             reasons.append('front_stop')
         if vx > 0.0 and wz != 0.0:

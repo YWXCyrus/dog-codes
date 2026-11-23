@@ -16,6 +16,7 @@ from rc.attitude import Attitude
 from rc.driver import Driver, DriverInput, HOLD
 from rc.grid import Grid
 from rc.guard import Cmd, Guard, GuardInput
+from rc.curtain import CurtainDetector
 from rc.liomap import LioMap
 from rc.odom import LegOdom
 from rc.sensing import Mount, ObstacleDetector, Scan, filter_sensor, level_points
@@ -31,6 +32,7 @@ class CoreOut:
     events: list = field(default_factory=list)
     status: dict = field(default_factory=dict)
     guard: list = field(default_factory=list)
+    asks: list = field(default_factory=list)       # camera questions for /quad/vlm_ask (curtain)
 
 
 class Core:
@@ -43,6 +45,8 @@ class Core:
         self.stairs_det = StairDetector(cfg)
         self.odom = LegOdom(cfg)
         self.lio = LioMap(cfg)                     # FAST-LIO-placed local map (replaces the old memory)
+        self.curtain_det = CurtainDetector(cfg)    # cloth-like surface ahead (rc/curtain.py)
+        self.curtain_surf = None
         self.det_map = ObstacleDetector(cfg)       # obstacle rule on live scan + map points
         self.map_extra = np.zeros((0, 2))          # map obstacle + drop cells (body frame) for the lanes
         self.grid = Grid(cfg['cell_m'])
@@ -112,6 +116,10 @@ class Core:
         self.odom.update(x, y, yaw, t, abs(self.last_cmd.vx))
         self.arrival['odom'] = t
 
+    def on_vlm_answer(self, d, t):
+        """/quad/vlm_answer from perception (camera check of a curtain)."""
+        self.driver.curtain.on_answer(d)
+
     def on_qr_event(self, d, t):
         """A perception event from /quad/event (qr_seen / qr_decoded) for the QR approach."""
         text = self.driver.qr.on_event(d, t)
@@ -146,6 +154,8 @@ class Core:
             self.map_extra = np.zeros((0, 2))
         self.lio.add(xs, t)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
+        if self.c['curtain'] != 'off':
+            self.curtain_surf = self.curtain_det.update(p, self.floor_z, t, self.gyro[2])
 
     # ---------------------------------------------------------------- helpers
     def ages(self, t):
@@ -164,7 +174,9 @@ class Core:
         return self.map_extra if self.lio.usable(t) else np.zeros((0, 2))
 
     def guard_input(self, t):
-        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t)
+        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t,
+                          push=self.driver.curtain.push and self.driver.mode == 'CURTAIN',
+                          retreat=self.driver.curtain.phase == 'RETREAT' and self.driver.mode == 'CURTAIN')
 
     def filter(self, cmd, t):
         """Guard a command (used for start-up and gait tests too)."""
@@ -215,7 +227,10 @@ class Core:
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
                              last_cmd=self.last_cmd, dist_from_start=self.dist_from_start(),
-                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']))
+                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
+                             curtain=self.curtain_surf, curtain_confident=self.curtain_det.confident(),
+                             curtain_suspect=self.curtain_det.suspect(),
+                             lio_xy=(tuple(self.lio.p[:2]) if self.lio.usable(t) else None))
             out = self.driver.step(di)
             self.drive_out = out
             self.drive_cmd = out.cmd
@@ -228,7 +243,8 @@ class Core:
         gcmd, reasons = self.filter(cmd, t)
         if self.guard.latched and self.driver.mode != HOLD:
             self.driver._hold(t, 'tilt_latch', keep_stairs=self.driver.mode == 'STAIRS')
-        return CoreOut(cmd=gcmd, codes=codes, events=events, status=self.status(t), guard=reasons)
+        return CoreOut(cmd=gcmd, codes=codes, events=events, status=self.status(t), guard=reasons,
+                       asks=self.driver.curtain.take_asks())
 
     # ---------------------------------------------------------------- status / viewer
     def status(self, t):

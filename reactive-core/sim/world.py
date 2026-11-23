@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 
 SOLID = ('wall', 'low_back', 'block')   # never climbed, never stood on
+CLOTH = ('curtain', 'stiff_curtain')     # lidar: folds, flutter, see-through (sim/lidar.py)
+PASSABLE = ('curtain',)                  # the dog walks through (cloth); 'stiff_curtain' is a rigid decoy
 
 
 @dataclass
@@ -42,6 +44,13 @@ class World:
         L = math.hypot(x1 - x0, y1 - y0)
         return self.add(Box(cx, cy, L, t, 0.0, h, math.atan2(y1 - y0, x1 - x0), name))
 
+    def curtain(self, x0, y0, x1, y1, z0=0.03, z1=1.6, stiff=False):
+        """Cloth hanging from a bar between (x0, y0) and (x1, y1), hem z0 above the floor."""
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        L = math.hypot(x1 - x0, y1 - y0)
+        return self.add(Box(cx, cy, L, 0.02, z0, z1, math.atan2(y1 - y0, x1 - x0),
+                            'stiff_curtain' if stiff else 'curtain'))
+
     def board(self, cx, cy, sx, sy, h, name='board'):
         return self.add(Box(cx, cy, sx, sy, 0.0, h, 0.0, name))
 
@@ -65,7 +74,7 @@ class World:
         from `current` (<= current + max_step); the floor otherwise. Walls are never stood on."""
         best = 0.0
         for b in self.boxes:
-            if b.name in SOLID:
+            if b.name in SOLID or b.name in CLOTH:
                 continue
             if b.z1 <= current + max_step + 1e-9 and b.contains_xy(x, y):
                 best = max(best, b.z1)
@@ -75,6 +84,8 @@ class World:
         """Boxes that the footprint sample points (xs, ys) would hit at this support height."""
         hits = []
         for b in self.boxes:
+            if b.name in PASSABLE:
+                continue
             step = 0.02 if b.name in SOLID else max_step
             if b.z1 > support + step + 1e-9 and b.z0 < support + body_top:
                 if np.any(b.contains_xy(xs, ys)):

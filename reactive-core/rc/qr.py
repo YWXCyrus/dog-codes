@@ -244,9 +244,13 @@ class QrApproach:
                     or t - self.t_phase > self.step_d / c['qr_vx'] + 2.0):
                 self._phase(LOOK, t)
                 return Cmd()
-            err = G.wrap(self.goal_yaw - yaw)
+            # walk OR turn (team rule 8e28d5a, the dog slipped walking and turning at once): straight
+            # only; a heading that drifted off stops the step, LOOK measures again and TURN corrects
+            if abs(G.wrap(self.goal_yaw - yaw)) > math.radians(c['qr_align_deg'] + 3.0):
+                self._phase(LOOK, t)
+                return Cmd()
             vx = c['qr_vx_far'] if self.step_d - moved > 0.4 else c['qr_vx']
-            return Cmd(vx, _clamp(1.0 * err, -c['walk_wz_max'], c['walk_wz_max']))
+            return Cmd(vx, 0.0)
 
         if self.phase == READ:
             if t - self.t_phase > c['qr_read_s']:

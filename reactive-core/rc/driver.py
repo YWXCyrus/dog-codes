@@ -1,7 +1,7 @@
 """Driving state machine (spec sections 6 and 9.3).
 
 Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT),
-QR (phases LOOK, TURN, STEP, READ; rc/qr.py).
+QR (phases LOOK, TURN, STEP, READ; rc/qr.py), CURTAIN (ALIGN, INSPECT, APPROACH, PUSH; rc/curtain.py).
 The driver only proposes a command; the guard (rc/guard.py) filters every command afterwards.
 Headings in lanes are body-relative (0 = straight ahead, + = left); targets are stored as
 odom-frame yaw so they survive the dog's own rotation.
@@ -15,10 +15,11 @@ import numpy as np
 from rc import gait as Gt
 from rc import geometry as G
 from rc.guard import Cmd
+from rc.curtain import CurtainPass
 from rc.qr import QrApproach
 from rc.stairs import StairsResult
 
-CRUISE, TURN, BLOCKED, HOLD, STAIRS, QR = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS', 'QR'
+CRUISE, TURN, BLOCKED, HOLD, STAIRS, QR, CURTAIN = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS', 'QR', 'CURTAIN'
 
 
 @dataclass
@@ -37,6 +38,10 @@ class DriverInput:
     last_cmd: Cmd = field(default_factory=Cmd)   # previous GUARDED command (what the dog was sent)
     dist_from_start: float = 0.0
     front_dist: float = math.inf        # free distance straight ahead (raw scan), for the odometry cross-check
+    curtain: object = None              # rc.curtain.Surface ahead (latest scan) or None
+    curtain_confident: bool = False     # the detector saw cloth persistently
+    curtain_suspect: bool = False       # ... or something slightly cloth-like (camera decides)
+    lio_xy: tuple = None                # FAST-LIO position when usable (curtain touch test), else None
 
 
 @dataclass
@@ -81,6 +86,7 @@ class Driver:
         self.cmd_dist = 0.0             # distance by the guarded command (fallback when odometry is frozen)
         self._last_step_t = None
         self.qr = QrApproach(cfg, self._ev)      # QR approach (task M04), fed by core.on_qr_event
+        self.curtain = CurtainPass(cfg, self._ev)  # curtain: camera check + push with touch test
 
     # ---------------------------------------------------------------- helpers
     def _dist(self, di):
@@ -247,6 +253,17 @@ class Driver:
             self.prog.clear()
         elif self.qr.active:
             self.qr.abort(t)                          # left QR through a HOLD
+        if self.mode == CURTAIN:
+            prog = di.lio_xy if di.lio_xy is not None else di.pose[:2]
+            cmd = self.curtain.step(t, di.pose, di.curtain, di.front_dist, obs_body, prog)
+            if cmd is not None:
+                self.phase = self.curtain.phase
+                return self._out(cmd)
+            self.mode, self.phase = CRUISE, ''        # passed / wall / camera no: back to wall following
+            self.target_yaw = None
+            self.prog.clear()
+        elif self.curtain.active:
+            self.curtain.abort(t)
 
         # ---- stairs triggers (normal modes) ----
         st = di.stairs
@@ -272,6 +289,20 @@ class Driver:
             self.mode, self.phase = QR, self.qr.phase
             self.prog.clear()
             return self._out(Cmd())
+
+        # ---- curtain trigger (after stairs and QR) ----
+        if c['curtain'] != 'off' and di.curtain is not None:
+            stuck = self.mode == BLOCKED or t - self.last_new_cell_t > c['cur_last_resort_s']
+            why = self.curtain.wants(t, di.pose, di.curtain, di.curtain_confident, stuck, di.curtain_suspect)
+            if why == 'lidar' and c['curtain'] == 'detect':
+                if t - getattr(self, '_cur_logged', -1e9) > 5.0:
+                    self._cur_logged = t
+                    self._ev(t, curtain_seen=di.curtain.summary())
+            elif why is not None and c['curtain'] == 'pass':
+                self.curtain.start(t, di.pose, di.curtain, why)
+                self.mode, self.phase = CURTAIN, self.curtain.phase
+                self.prog.clear()
+                return self._out(Cmd())
 
         if self._progress(di):
             cell = self.grid.current
