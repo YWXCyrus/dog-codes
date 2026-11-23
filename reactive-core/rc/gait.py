@@ -6,6 +6,12 @@ A sequence is a list of steps:
   ('code', name)  send one /simple_cmd code (respecting simple_cmd_gap_s)
   ('wait', s)     wait s seconds (zero speed)
   ('turn_test',)  turn at test_wz for test_s; the gyro must show >= test_ratio of it
+
+Driving in AI (2026-11-23 hand tests on the dog): /cmd_vel is ignored there (speed commands need
+navigation mode, which AI does not support). The dog follows AXIS commands on /simple_cmd - the
+value goes in the 'size' field (SDK CommandHead value / paramters_size union) - sent at >= 20 Hz,
+forward and turn axis together, and forward only moves the dog in MANUAL control mode. So Enter AI
+switches to manual first and Exit AI switches back to navigation (auto) mode after leaving AI.
 """
 from rc.guard import Cmd
 
@@ -16,14 +22,55 @@ CODES = {
     'enter_ai': 0x21010528,
     'exit_ai': 0x2101052B,
     'ai_basic': 0x2101052A,
+    'manual': 0x21010C02,        # control mode manual (lite3_manual)
+    'auto': 0x21010C03,          # control mode navigation (lite3_auto); not allowed inside AI
+    'fwd_axis': 0x21010130,      # axis: forward (+) / backward
+    'turn_axis': 0x21010135,     # axis: turn, + = to the RIGHT
 }
 
 SET_RUG = [('code', 'rug_general'), ('wait', 0.5), ('code', 'rug_general'), ('wait', 1.0)]
-ENTER_AI = [('zero', 1.0), ('code', 'enter_ai'), ('wait', 2.0), ('code', 'ai_basic'), ('wait', 1.0),
-            ('turn_test',)]
+ENTER_AI = [('zero', 1.0), ('code', 'manual'), ('wait', 0.5), ('code', 'enter_ai'), ('wait', 2.0),
+            ('code', 'ai_basic'), ('wait', 1.0), ('turn_test',)]
 EXIT_AI = [('zero', 1.0), ('code', 'exit_ai'), ('wait', 2.0), ('code', 'move_mode'), ('wait', 0.5),
-           ('code', 'rug_general'), ('wait', 0.5), ('code', 'rug_general'), ('wait', 1.0), ('turn_test',)]
+           ('code', 'rug_general'), ('wait', 0.5), ('code', 'rug_general'), ('wait', 0.5),
+           ('code', 'auto'), ('wait', 1.0), ('turn_test',)]
 TURN_TEST = [('turn_test',)]
+AXIS_MAX = 32767
+
+
+def axis_values(cmd, cfg):
+    """(forward, turn) axis values for a guarded command: dead zone + gain * speed, clamped.
+    Never backwards; our +wz turns left, the dog's turn axis is positive to the right."""
+    c = cfg
+    fwd = 0
+    if cmd.vx > 0.0:
+        fwd = int(min(AXIS_MAX, round(c['ai_fwd_dz'] + c['ai_fwd_gain'] * cmd.vx)))
+    turn = 0
+    if cmd.wz != 0.0:
+        mag = int(min(AXIS_MAX, round(c['ai_turn_dz'] + c['ai_turn_gain'] * abs(cmd.wz))))
+        turn = -mag if cmd.wz > 0 else mag
+    return fwd, turn
+
+
+class AiAxis:
+    """Knows from the codes actually sent whether the dog is in AI; there every command becomes
+    both axis commands (forward, turn) instead of /cmd_vel."""
+
+    def __init__(self, cfg):
+        self.c = cfg
+        self.active = False
+
+    def on_code(self, code):
+        if code == CODES['enter_ai']:
+            self.active = True
+        elif code == CODES['exit_ai']:
+            self.active = False
+
+    def messages(self, cmd):
+        if not self.active:
+            return []
+        fwd, turn = axis_values(cmd, self.c)
+        return [(CODES['fwd_axis'], fwd), (CODES['turn_axis'], turn)]
 
 
 class GaitSequencer:

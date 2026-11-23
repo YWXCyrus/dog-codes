@@ -17,6 +17,7 @@ from std_msgs.msg import String
 from tf2_msgs.msg import TFMessage
 
 from rc import geometry as G
+from rc.gait import CODES, AiAxis
 from rc.pc2 import cloud_to_xyz
 
 try:
@@ -67,12 +68,15 @@ class RosIO:
             self.cmd_pub = n.create_publisher(Twist, '/nav_cmd_vel', 10)
             if MotionSimpleCMD is None:
                 raise RuntimeError('transfer_interfaces not found: source the workspace that has it')
+            # the bridge subscribes TRANSIENT_LOCAL: a VOLATILE publisher is incompatible (codes dropped).
+            # depth 10: in AI the axis commands (40 msgs/s) must not overwrite a gait code before delivery
             dur = (DurabilityPolicy.TRANSIENT_LOCAL if cfg['simple_cmd_qos'] == 'transient_local'
                    else DurabilityPolicy.VOLATILE)
             self.simple_pub = n.create_publisher(
                 MotionSimpleCMD, '/simple_cmd',
                 QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST,
-                           depth=1 if dur == DurabilityPolicy.TRANSIENT_LOCAL else 10, durability=dur))
+                           depth=10, durability=dur))
+        self.ai = AiAxis(cfg)               # in AI the commands go out as axis commands on /simple_cmd
 
     # ---- inputs (executor thread) ----
     def on_cloud(self, m):
@@ -148,24 +152,35 @@ class RosIO:
                 self.mount_from_tf = True
 
     # ---- outputs (main thread) ----
+    def _simple(self, code, value=0):
+        if self.simple_pub is not None:
+            msg = MotionSimpleCMD()
+            msg.cmd_code = int(code)
+            msg.size = int(value)
+            msg.type = 0
+            self.simple_pub.publish(msg)
+
     def send(self, cmd, codes=()):
-        """Publish the guarded command and queue gait codes (min gap simple_cmd_gap_s)."""
+        """Publish the guarded command and queue gait codes (min gap simple_cmd_gap_s). In AI the
+        command goes out as axis commands on /simple_cmd (/nav_cmd_vel gets zero)."""
         self.code_queue.extend(codes)
         now = time.monotonic()
         if self.code_queue and now - self.last_code_t >= self.c['simple_cmd_gap_s']:
             code = self.code_queue.pop(0)
             self.last_code_t = now
-            if self.simple_pub is not None:
-                msg = MotionSimpleCMD()
-                msg.cmd_code = int(code)
-                msg.size = 0
-                msg.type = 0
-                self.simple_pub.publish(msg)
-            self.node.get_logger().info('%s simple_cmd 0x%08X' % ('' if self.publish else '[dry-run]', code))
+            self._simple(code)
+            self.ai.on_code(code)
+            self.node.get_logger().info('%s simple_cmd 0x%08X%s' % (
+                '' if self.publish else '[dry-run]', code, '  (AI: axis commands on)' if self.ai.active
+                and code == CODES['enter_ai'] else ''))
+        axis = self.ai.messages(cmd)
+        for code, value in axis:
+            self._simple(code, value)
         if self.cmd_pub is not None:
             tw = Twist()
-            tw.linear.x = float(max(0.0, cmd.vx))       # never reverse (also enforced by the guard)
-            tw.angular.z = float(cmd.wz)
+            if not axis:
+                tw.linear.x = float(max(0.0, cmd.vx))   # never reverse (also enforced by the guard)
+                tw.angular.z = float(cmd.wz)
             self.cmd_pub.publish(tw)
 
     def zero_for(self, seconds, rate=20.0):

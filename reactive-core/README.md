@@ -46,9 +46,18 @@ with the controller - start-up sends nothing to the dog.
    last 20 deg), then walk again. The guard drops the turn of any command that still does both
    (`walk_no_turn` in the logs = a driver path was missed).
    Grid: start (0,0), +y = the start heading ("N"), +x = right, 1 m cells.
+   BLOCKED (no free lane): turn on the spot ONE way until a lane is free `blocked_confirm_n` (3)
+   decisions in a row; blocked again within `blocked_memory_s` (5 s) keeps the direction and the
+   turned angle (no left-right-left dithering); a full circle without a lane -> HOLD `blocked`.
 3. Stairs: confident stairs ahead -> APPROACH (square to the steps, 0.6 m short) -> ENTER
-   (Enter AI -> AI Basic -> turn test) -> ALIGN -> CLIMB -> DESCEND -> EXIT (Exit AI -> Move Mode ->
-   RUG general -> turn test) -> wall following continues. Unsure stairs: stop 2 s, look again.
+   (manual mode -> Enter AI -> AI Basic -> turn test) -> ALIGN -> CLIMB -> DESCEND -> EXIT (Exit AI ->
+   Move Mode -> RUG general -> auto mode -> turn test) -> wall following continues. Unsure stairs:
+   stop 2 s, look again.
+   **In AI the dog ignores `/cmd_vel`**: the code drives it with axis commands on `/simple_cmd`
+   (forward `0x21010130` + turn `0x21010135` every time, value in `size`, 20 Hz; axis value = dead
+   zone + gain x speed, `ai_*` keys), and forward only works in **manual** control mode - so the
+   controller has the speed while on the stairs: hands off the sticks. Ctrl+C / a crash in AI leaves
+   the dog standing in AI + manual: finish with `ai_exit` by hand.
    Approach: turn on the spot when the stairs are > 5 deg off, walk straight otherwise. Climb and
    descent: straight, no turning on a step; drifted more than `stair_hold_err_deg` (15) -> HOLD.
 4. **HOLD** (`*** HOLD: <reason> ... ***`): the dog stands still, the Captain may drive by
@@ -60,7 +69,7 @@ with the controller - start-up sends nothing to the dog.
    | `no_progress` | sent forward 3 s but did not move (marked as dead end) |
    | `time` | `run_time_s` reached |
    | `stairs_unsure` | something stair-like, not sure -> Captain decides |
-   | `ai_no_response` | AI Basic did not obey `/cmd_vel` (turn test); AI already exited -> Captain takes the stairs |
+   | `ai_no_response` | AI Basic did not obey the turn-axis command (turn test); AI already exited -> Captain takes the stairs |
    | `rug_no_response` | after Exit AI the dog does not respond; Enter retries the exit sequence |
    | `stairs_no_progress`, `stairs_timeout`, `stairs_lost` | trouble on the stairs: the dog stays in AI Basic (never exits AI on a step) |
    | `stairs_heading` | heading drifted > 15 deg on the stairs (no turning on a step): stays in AI Basic; line it up by controller, Enter resumes |
@@ -104,7 +113,10 @@ the run folder. The ones to tune on the course:
 | `tilt_stop_deg` / `tilt_resume_deg` / `tilt_latch_deg` | 35 / 30 / 60 | stop above, drive on by itself below resume (must stay above the ~27 deg stair slope), latch above |
 | `run_time_s` | 0 (off) | HOLD after this many seconds |
 | `odom_topic` / `odom_type` | /leg_odom / pose | position source (`/leg_odom2` + `odometry` as alternative) |
-| `simple_cmd_qos` | volatile | `transient_local` if gait codes do not arrive |
+| `simple_cmd_qos` | transient_local | must match the `/simple_cmd` bridge (`lite3_domain_bridge_1`, TRANSIENT_LOCAL); with `volatile` every gait code was silently dropped (warning "incompatible QoS ... DURABILITY") |
+| `ai_fwd_dz` / `ai_fwd_gain` | 6553 / 56000 | AI forward axis = dead zone + gain x m/s (25000 walked ~0.33 m/s, rough) |
+| `ai_turn_dz` / `ai_turn_gain` | 9553 / 12000 | AI turn axis = dead zone + gain x rad/s (15000 turned ~0.45 rad/s, rough) |
+| `blocked_confirm_n` / `blocked_memory_s` | 3 / 5.0 | BLOCKED ends on a lane free this many decisions in a row; re-entry within this keeps direction + turned angle |
 
 ### QR approach (task M04, `rc/qr.py`)
 Needs perception running next to `run.py` (`perception/perception.launch.py`, start it after "Ready").
@@ -171,8 +183,14 @@ and a lightly folded curtain with the camera down (looks like a wall to any lida
 
 ### Optional checks
 - `python3 run.py --live --gait-test ai_basic` — dog standing in open floor, e-stop held: start-up,
-  Enter AI -> AI Basic -> turn test -> 1 s forward at 0.1 m/s -> Exit AI -> RUG general -> turn test,
-  printing what the gyro and leg odometry saw. Answers "does `/cmd_vel` drive AI Basic?" before a run.
+  manual -> Enter AI -> AI Basic -> turn test (turn axis) -> 1 s forward at 0.1 m/s (forward axis) ->
+  Exit AI -> RUG general -> auto -> turn test (`/cmd_vel`), printing what the gyro and leg odometry
+  saw. Checks the whole AI path before a run; the leg-odometry distance calibrates `ai_fwd_gain`.
+- Manual AI (aliases in `~/.bashrc` on the dog): `lite3_manual; ai_mode` ... `ai_exit` (Exit AI ->
+  move mode -> RUG general x2 -> auto). Axis by hand: `ros2 topic pub -r 20 -t 60 /simple_cmd
+  transfer_interfaces/msg/MotionSimpleCMD "{cmd_code: 0x21010130, size: 25000, type: 0}"` (send the
+  turn axis `0x21010135` with `size: 0` alongside; never Ctrl+C a backgrounded `&` publisher - it
+  keeps sending: check `ros2 topic info /simple_cmd -v`).
 
 ## 2. What a run leaves behind
 `runs/<date_time>/`: `bag/` (raw `/livox/points`, `/leg_odom(2)`, `/odom`, IMU, joints, every
