@@ -26,8 +26,9 @@ def line(x0, y0, x1, y1, n=80):
 class Loop:
     """Scripted world: obstacles fixed in the BODY frame (or a function of the pose)."""
 
-    def __init__(self, c, obs=E, stairs=None, gyro_gain=1.0, moves=True, tilt=0.0, pitch=None):
+    def __init__(self, c, obs=E, stairs=None, gyro_gain=1.0, moves=True, tilt=0.0, pitch=None, drift=0.0):
         self.c = c
+        self.drift = drift              # rad/s the heading creeps while walking (gait drift)
         self.pitch = pitch
         self.grid = Grid(1.0)
         self.grid.set_origin((0.0, 0.0, 0.0))
@@ -59,7 +60,7 @@ class Loop:
         self.cmds.append(out.cmd)
         dt = 0.1
         if self.moves:
-            self.pose[2] += out.cmd.wz * dt
+            self.pose[2] += out.cmd.wz * dt + (self.drift * dt if out.cmd.vx > 0 else 0.0)
             dx = out.cmd.vx * dt
             self.pose[0] += dx * math.cos(self.pose[2])
             self.pose[1] += dx * math.sin(self.pose[2])
@@ -117,7 +118,12 @@ def test_boxed_in_turns_on_the_spot_then_holds_and_resume():
     assert out.mode == 'CRUISE'
 
 
-def test_heading_error_over_head_err_turns_on_the_spot_small_one_steers_walking():
+def mixed(cmds):
+    """Commands that walk and turn at once (never allowed since 2026-11-23: slips at ledges)."""
+    return [(round(c.vx, 3), round(c.wz, 3)) for c in cmds if c.vx > 0.0 and c.wz != 0.0]
+
+
+def test_heading_error_over_head_err_turns_on_the_spot_small_one_walks_straight():
     c = cfg()
     lp = Loop(c)
     lp.run(0.2)
@@ -128,8 +134,51 @@ def test_heading_error_over_head_err_turns_on_the_spot_small_one_steers_walking(
     lp2.run(0.2)
     lp2.d.target_yaw, lp2.d.target_t = math.radians(c['head_err_turn_deg'] - 4), lp2.t
     out = lp2.step()
-    assert out.mode == 'CRUISE' and out.cmd.vx == pytest.approx(c['cruise_vx'])
-    assert 0 < out.cmd.wz <= c['walk_wz_max'] + 1e-9
+    assert out.mode == 'CRUISE' and out.cmd.vx == pytest.approx(c['cruise_vx']) and out.cmd.wz == 0.0
+
+
+def test_turn_goes_on_until_turn_done_deg_then_walks_straight():
+    c = cfg()
+    lp = Loop(c)
+    lp.run(0.2)
+    target = math.radians(c['head_err_turn_deg'] + 15)
+    for _ in range(100):
+        lp.d.target_yaw, lp.d.target_t = target, lp.t          # keep the target committed
+        out = lp.step()
+        if out.mode == 'CRUISE':
+            break
+    assert out.mode == 'CRUISE' and out.cmd.wz == 0.0 and out.cmd.vx > 0
+    # the turn ended inside turn_done_deg, not at head_err_turn_deg
+    assert abs(math.degrees(target - lp.pose[2])) <= c['turn_done_deg'] + 1e-6
+    assert mixed(lp.cmds) == []
+
+
+def test_turn_slows_near_the_target_and_turns_back_after_an_overshoot():
+    # the dog answers a turn command ~0.3 s late (043747): full turn_wz up to the last degrees would
+    # overshoot past turn_done_deg; an overshoot is turned back, not carried round a full circle
+    c = cfg()
+    lp = Loop(c)
+    lp.run(0.2)
+    lp.d.target_yaw, lp.d.target_t = math.radians(40), lp.t
+    out = lp.step()
+    assert out.mode == 'TURN' and out.cmd.wz == pytest.approx(c['turn_wz'])
+    lp.pose[2] = math.radians(40 - (c['turn_done_deg'] + 2))       # nearly there
+    lp.d.target_yaw, lp.d.target_t = math.radians(40), lp.t
+    out = lp.step()
+    assert out.mode == 'TURN' and 0 < out.cmd.wz < c['turn_wz']
+    lp.pose[2] = math.radians(40 + c['turn_done_deg'] + 2)         # overshot
+    lp.d.target_yaw, lp.d.target_t = math.radians(40), lp.t
+    out = lp.step()
+    assert out.mode == 'TURN' and out.cmd.vx == 0.0 and out.cmd.wz < 0
+
+
+def test_driving_never_walks_and_turns_with_gait_drift():
+    # corridor with a left wall and a T junction ahead, the gait creeps the heading to the right
+    obs = lambda loop: np.vstack([line(-1, 0.6, 3, 0.6), line(2.5, -3, 2.5, 3)])
+    lp = Loop(cfg(), obs=obs, drift=-0.05)
+    lp.run(30.0)
+    assert any(c.vx > 0 for c in lp.cmds) and any(c.wz != 0 for c in lp.cmds)
+    assert mixed(lp.cmds) == []
 
 
 def test_constant_cruise_speed_near_obstacles():
@@ -158,14 +207,15 @@ def test_run_timer():
     assert lp.d.mode == 'HOLD' and lp.d.hold_reason == 'time'
 
 
-def stairs_world(edge_x0=2.0):
+def stairs_world(edge_x0=2.0, fixed=False):
     """Stairs whose first edge is at odom x = edge_x0 straight ahead; 'down' appears from the
-    platform (odom x in [edge+0.9, edge+1.5]); past that the floor is lower and flat."""
+    platform (odom x in [edge+0.9, edge+1.5]); past that the floor is lower and flat.
+    fixed=True: the stairs face odom +x whatever the dog's heading (heading reported body-relative)."""
     def st(loop):
         x = loop.pose[0]
         e = edge_x0 - x
         if loop.d.phase in ('', 'APPROACH') and e > 0.6:
-            return StairsResult('up', 0.0, e, True, 3)
+            return StairsResult('up', -loop.pose[2] if fixed else 0.0, e, True, 3)
         if edge_x0 + 0.9 < x < edge_x0 + 1.5:
             return StairsResult('down', 0.0, edge_x0 + 1.6 - x, False)
         return StairsResult()
@@ -197,6 +247,51 @@ def test_full_stairs_sequence():
     # AI Basic was entered on flat ground, short of the stairs edge
     i_enter = phases.index('ENTER')
     assert all(c.vx >= 0 for c in lp.cmds)
+
+
+def test_stairs_never_walk_and_turn_with_gait_drift():
+    # approach: stop and turn on the spot, then walk straight; on the steps: straight, no steering
+    st, tilt, pitch = stairs_world(fixed=True)
+    lp = Loop(cfg(), stairs=st, tilt=tilt, pitch=pitch, drift=0.005)
+    lp.run(90.0)
+    assert 'exit_ai' in lp.codes and lp.d.stairs_done
+    assert mixed(lp.cmds) == []
+    on_steps = [c for c, (m, p) in zip(lp.cmds, lp.modes) if p in ('CLIMB', 'DESCEND')]
+    assert on_steps and all(c.wz == 0.0 for c in on_steps)
+
+
+def test_stairs_approach_off_axis_turns_on_the_spot_first():
+    # stairs 12 deg to the left: turn on the spot until within turn_done_deg, then walk straight
+    def st(loop):
+        e = 2.0 - loop.pose[0]
+        if loop.d.phase in ('', 'APPROACH') and e > 0.6:
+            return StairsResult('up', math.radians(12) - loop.pose[2], e, True, 3)
+        return StairsResult()
+    c = cfg()
+    lp = Loop(c, stairs=st)
+    for _ in range(300):
+        lp.step()
+        if lp.d.phase == 'ENTER':
+            break
+    appr = [cm for cm, (m, p) in zip(lp.cmds, lp.modes) if p == 'APPROACH']
+    assert any(cm.wz > 0 and cm.vx == 0 for cm in appr) and any(cm.vx > 0 for cm in appr)
+    assert mixed(lp.cmds) == []
+    assert lp.d.phase == 'ENTER'
+
+
+def test_stairs_heading_drift_on_steps_holds_in_ai():
+    # no turning on a step: a heading error over stair_hold_err_deg there is a HOLD (stay in AI)
+    st, tilt, pitch = stairs_world(fixed=True)
+    lp = Loop(cfg(), stairs=st, tilt=tilt, pitch=pitch)
+    for _ in range(600):
+        lp.step()
+        if lp.d.phase == 'CLIMB':
+            break
+    lp.drift = 0.08
+    lp.run(10.0)
+    assert lp.d.mode == 'HOLD' and lp.d.hold_reason == 'stairs_heading'
+    assert 'exit_ai' not in lp.codes
+    assert mixed(lp.cmds) == []
 
 
 def test_stairs_exit_despite_walking_wobble():
