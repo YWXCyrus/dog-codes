@@ -1,6 +1,6 @@
 """Core: everything between the sensors and the guarded command (no ROS).
 
-Feed it with on_cloud / on_imu / on_joints / on_odom (arrival time t from time.monotonic()
+Feed it with on_cloud / on_imu / on_joints / on_odom / on_lio (arrival time t from time.monotonic()
 or the simulator clock), call start(t) when the operator presses Enter, then tick(t) at
 cmd_rate_hz. tick() returns the GUARDED command plus any /simple_cmd codes to send.
 """
@@ -16,7 +16,7 @@ from rc.attitude import Attitude
 from rc.driver import Driver, DriverInput, HOLD
 from rc.grid import Grid
 from rc.guard import Cmd, Guard, GuardInput
-from rc.memory import ObstacleMemory
+from rc.liomap import LioMap
 from rc.odom import LegOdom
 from rc.sensing import Mount, ObstacleDetector, Scan, filter_sensor, level_points
 from rc.stairs import StairDetector, StairsResult
@@ -42,7 +42,9 @@ class Core:
         self.det = ObstacleDetector(cfg)
         self.stairs_det = StairDetector(cfg)
         self.odom = LegOdom(cfg)
-        self.mem = ObstacleMemory(cfg)
+        self.lio = LioMap(cfg)                     # FAST-LIO-placed local map (replaces the old memory)
+        self.det_map = ObstacleDetector(cfg)       # obstacle rule on live scan + map points
+        self.map_extra = np.zeros((0, 2))          # map obstacle + drop cells (body frame) for the lanes
         self.grid = Grid(cfg['cell_m'])
         self.guard = Guard(cfg, sensor_x=float(self.mount.xyz[0]))
         self.driver = Driver(cfg, self.grid)
@@ -110,23 +112,33 @@ class Core:
         self.odom.update(x, y, yaw, t, abs(self.last_cmd.vx))
         self.arrival['odom'] = t
 
+    def on_lio(self, pos, quat, t):
+        bad = self.lio.on_pose(pos, quat, t)
+        if bad is not None:
+            self.map_extra = np.zeros((0, 2))
+            self.pending_events.append({'t': round(t, 2), 'lio_bad': bad + ' - map off, live scan only'})
+
     @property
     def odom_ok(self):
         return self.odom.ok and not self.driver.odom_frozen
 
     def on_cloud(self, xyz_sensor, t):
         self.arrival['livox'] = t
-        p = level_points(filter_sensor(xyz_sensor, self.c['near_drop_m'], self.c['max_range_m']),
-                         self.mount, self.att.roll, self.att.pitch)
+        xs = filter_sensor(xyz_sensor, self.c['near_drop_m'], self.c['max_range_m'])
+        p = level_points(xs, self.mount, self.att.roll, self.att.pitch)
         self.p_level = p
         stairs_mode = self.driver.stairs_mode
         self.scan = self.det.update(p, self.floor_z, t, stairs_mode=stairs_mode)
-        pose = self.odom.pose
-        if pose is not None and self.odom_ok:
-            self.mem.clear_seen(self.scan.ground_now, self.scan.high_now, pose)
-            # memory only while running, and not while tilted (mis-levelled scans make ghost cells)
-            if self.started and self.att.tilt_deg() <= self.c['mem_tilt_max_deg']:
-                self.mem.add(self.scan.obs, pose, t, self.odom.travelled)
+        # FAST-LIO map: earlier scans in the current sensor frame, levelled like this one; the same
+        # obstacle rule on live + map points gives the cells for the lanes (front stop: live only)
+        m = self.lio.points_sensor(t)
+        if m.shape[0]:
+            pm = level_points(m, self.mount, self.att.roll, self.att.pitch)
+            sm = self.det_map.update(np.vstack([p, pm]), self.floor_z, t, stairs_mode=stairs_mode)
+            self.map_extra = np.vstack([sm.obs, sm.drops])
+        else:
+            self.map_extra = np.zeros((0, 2))
+        self.lio.add(xs, t)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
 
     # ---------------------------------------------------------------- helpers
@@ -142,9 +154,8 @@ class Core:
         return math.hypot(self.odom.pose[0] - self.start_pose[0], self.odom.pose[1] - self.start_pose[1])
 
     def _mem_body(self, t):
-        if self.odom.pose is None or not self.odom_ok:
-            return np.zeros((0, 2))
-        return self.mem.query(self.odom.pose, t, self.odom.travelled)
+        """Map obstacle / drop cells (body frame) for the lanes and the wall check; empty without FAST-LIO."""
+        return self.map_extra if self.lio.usable(t) else np.zeros((0, 2))
 
     def guard_input(self, t):
         return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t)
@@ -160,7 +171,6 @@ class Core:
     def start(self, t):
         pose = self.odom.pose or (0.0, 0.0, 0.0)
         self.start_pose = pose
-        self.mem.clear()                           # nothing from before go (stand-up, posture change)
         self.grid.set_origin(pose)
         self.grid.update(pose)
         self.started = True
@@ -179,7 +189,6 @@ class Core:
         ok = self.odom_ok
         if ok != self.odom_was_ok:
             if not ok:
-                self.mem.clear()
                 self.grid.clear()
                 events.append({'t': round(t, 2), 'odom_inconsistent':
                                'frozen (lidar saw motion)' if self.driver.odom_frozen else self.odom.reason})
@@ -228,7 +237,7 @@ class Core:
             'cell': list(cell) if cell else None, 'dir': head,
             'front_m': round(front, 2), 'tilt': round(self.att.tilt_deg(), 1),
             'floor_m': round(-self.floor_z, 3),
-            'odom_ok': self.odom_ok, 'posture': self.posture,
+            'odom_ok': self.odom_ok, 'posture': self.posture, 'lio': self.lio.status(t),
             'ages': {k: (None if math.isinf(v) else round(v, 2)) for k, v in self.ages(t).items()},
             'stairs': self.stairs.kind, 'wall_side': 'left' if d.side > 0 else 'right',
             'guard': list(self.last_guard),

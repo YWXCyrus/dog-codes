@@ -25,8 +25,6 @@ class Scan:
     obs_now: np.ndarray = field(default_factory=lambda: EMPTY2.copy())   # this scan only
     obs: np.ndarray = field(default_factory=lambda: EMPTY2.copy())       # persistent cells
     drops: np.ndarray = field(default_factory=lambda: EMPTY2.copy())     # persistent drop patches
-    ground_now: np.ndarray = field(default_factory=lambda: EMPTY2.copy())  # this scan: walkable returns
-    high_now: np.ndarray = field(default_factory=lambda: EMPTY2.copy())    # this scan: obstacle-height returns
     floor_z: float = -0.32
     t: float = 0.0
 
@@ -113,8 +111,6 @@ class ObstacleDetector:
             ground, dk = self._patch_ground(p, floor_z, trust)
             h = p[:, 2] - ground
             m = (h > c['step_limit']) & (h < c['obs_h_max'])
-            scan.ground_now = p[np.abs(h) <= c['step_limit'], :2]
-            scan.high_now = p[m, :2]
             if m.any():
                 k, cnt = np.unique(_keys(_cells(p[m, :2], c['obs_cell_m'])), return_counts=True)
                 obs_keys = k[cnt >= c['n_min']]

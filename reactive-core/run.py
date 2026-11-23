@@ -10,7 +10,8 @@
   --no-record / --record-camera  run recording (bag) off / with the camera
   --no-viewer                    no web viewer
 
-Start-up: feeds (all four topics arriving) -> "Press Enter to go". Nothing is sent during
+Start-up: FAST-LIO restarted fresh (lio_restart; keep the dog still) -> feeds (all four topics
+arriving) -> first FAST-LIO pose -> "Press Enter to go". Nothing is sent to the dog during
 start-up: stand the dog up and choose the gait with the controller first. Enter during a HOLD resumes. Ctrl+C: zero speed for 1 s, exit, the dog
 stays standing. An e-stop is never recovered: if the dog's feed is lost the script stops and exits.
 """
@@ -19,6 +20,7 @@ import datetime
 import json
 import os
 import queue
+import shlex
 import signal
 import subprocess
 import sys
@@ -31,7 +33,8 @@ sys.path.insert(0, HERE)
 from rc import config  # noqa: E402
 
 RECORD_TOPICS = ['/livox/points', '/leg_odom', '/leg_odom2', '/odom', '/imu/data', '/joint_states',
-                 '/nav_cmd_vel', '/cmd_vel', '/simple_cmd', '/tf_static', '/rc/status']
+                 '/nav_cmd_vel', '/cmd_vel', '/simple_cmd', '/tf_static', '/rc/status',
+                 '/fastlio/odometry', '/livox/lidar', '/livox/imu']     # FAST-LIO output + its raw inputs
 CAMERA_TOPIC = '/camera/color/image_raw'
 FEED_LOST_EXIT_S = 5.0
 
@@ -112,11 +115,40 @@ def stop_recorder(p):
             pass
 
 
+def start_lio(run_dir, cfg):
+    """Stop any running FAST-LIO (an old copy drifts: km off on 2026-11-23) and start a fresh one."""
+    subprocess.run(['pkill', '-f', 'fastlio_mapping'], check=False)
+    time.sleep(1.0)
+    log = open(os.path.join(run_dir, 'lio.log'), 'w')
+    try:
+        p = subprocess.Popen(shlex.split(cfg['lio_cmd']), stdout=log, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+    except FileNotFoundError as e:
+        print('WARNING: FAST-LIO not started (%s) - live scan only' % e)
+        return None
+    print('FAST-LIO restarted fresh (%s) - keep the dog STILL until "Ready"' % cfg['lio_cmd'])
+    return p
+
+
+def stop_lio(p):
+    if p is None or p.poll() is not None:
+        return
+    try:
+        os.killpg(p.pid, signal.SIGINT)
+        p.wait(timeout=5)
+    except Exception:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+
 def fmt_status(t0, st):
     cell = 'cell (%d,%d) %s' % (st['cell'][0], st['cell'][1], st['dir'] or '-') if st['cell'] else 'cell -'
     mode = st['mode'] + (' ' + st['phase'] if st['phase'] else '')
-    return '[%6.1fs] %-16s %-14s front %4.2f m  tilt %4.1f  floor %.2f  odom %s  stairs %-6s  wall %s%s' % (
+    return '[%6.1fs] %-16s %-14s front %4.2f m  tilt %4.1f  floor %.2f  odom %s  lio %-3s  stairs %-6s  wall %s%s' % (
         time.monotonic() - t0, mode, cell, st['front_m'], st['tilt'], st['floor_m'], 'ok' if st['odom_ok'] else 'BAD',
+        st['lio'],
         st['stairs'], st['wall_side'], ('  guard ' + ','.join(st['guard'])) if st['guard'] else '')
 
 
@@ -163,6 +195,7 @@ def main(argv=None):
     threading.Thread(target=ex.spin, daemon=True).start()
     console = Console()
     rec = None
+    lio_proc = None
     viewer = None
     dec = open(os.path.join(run_dir, 'decisions.jsonl'), 'a')
     snaps = open(os.path.join(run_dir, 'snapshots.jsonl'), 'a')
@@ -199,6 +232,9 @@ def main(argv=None):
             except Exception as e:
                 print('viewer not started: %s' % e)
 
+        if cfg['lio_restart'] and not args.sim:
+            lio_proc = start_lio(run_dir, cfg)
+
         # ---------------- start-up ----------------
         su = Startup(cfg, dry_run=not publish)
         last_msg = None
@@ -222,6 +258,17 @@ def main(argv=None):
             fz, fsrc = -core.floor_z, core.floor_src
         print('floor %.3f m below base_link (%s)' % (fz, 'from the leg joints' if fsrc == 'legs'
                                                      else 'body_h_default - legs gave no valid height'))
+        end = time.monotonic() + cfg['lio_wait_s']
+        while time.monotonic() < end:
+            with io.lock:
+                if core.lio.usable(time.monotonic()):
+                    break
+            time.sleep(0.1)
+        with io.lock:
+            lio_st = core.lio.status(time.monotonic())
+        print('FAST-LIO: %s' % ('pose arriving - map on' if lio_st == 'ok' else
+                                'NO pose on %s - driving on the live scan only (see lio.log)' % cfg['lio_topic']))
+        log({'lio_at_start': lio_st})
 
         # ---------------- gait test only ----------------
         if args.gait_test:
@@ -300,6 +347,7 @@ def main(argv=None):
             except Exception:
                 pass
         stop_recorder(rec)
+        stop_lio(lio_proc)
         if viewer is not None:
             try:
                 viewer.shutdown()

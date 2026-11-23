@@ -33,9 +33,11 @@ bring-up). Before every run: auto mode on (`lite3_auto`), stand the dog up and c
 with the controller - start-up sends nothing to the dog.
 
 ### What happens
-1. Start-up: the four feeds (`/livox/points`, `/imu/data`, `/joint_states`, `/leg_odom`) arrive for
-   1 s -> `floor 0.327 m below base_link (from the leg joints)` -> **"Ready. Press Enter to go"**.
-   Nothing is sent to the dog during start-up.
+1. Start-up: `run.py` stops any running FAST-LIO (`pkill -f fastlio_mapping`) and starts a fresh one
+   (`lio_cmd`, output in `lio.log`) - **keep the dog still until "Ready"**. Then the four feeds
+   (`/livox/points`, `/imu/data`, `/joint_states`, `/leg_odom`) arrive for 1 s ->
+   `floor 0.327 m below base_link (from the leg joints)` -> `FAST-LIO: pose arriving - map on` ->
+   **"Ready. Press Enter to go"**. Nothing is sent to the dog during start-up.
 2. Enter: autonomous. Status line every ~2 s:
    `[  42.0s] CRUISE  cell (1,3) N  front 1.20 m  tilt 4.1  floor 0.33  odom ok  stairs none  wall left`
    Driving: constant `cruise_vx` (0.20 m/s); heading error above `head_err_turn_deg` (10 deg) ->
@@ -76,7 +78,10 @@ the run folder. The ones to tune on the course:
 | key | start | what |
 |---|---|---|
 | `step_limit` | 0.25 | higher than this above the local ground = obstacle (strips below it are walked over) |
-| `lane_w` | 0.70 | lane width; must fit the doorways (min 0.50) |
+| `lane_w` | 0.60 | lane width; must fit the doorways and the ~0.9 m start bay (min 0.50) |
+| `lio_restart` / `lio_cmd` | true / `ros2 launch lite3_launcher fast_lio.launch.py` | fresh FAST-LIO every run (`false`: leave the running one alone) |
+| `lio_radius_m` / `lio_time_s` / `lio_blind_m` | 3.0 / 30 / 0.50 | FAST-LIO map kept around the dog; points nearer than blind (own legs) never stored |
+| `lio_max_speed` / `lio_jump_m` | 1.0 / 0.50 | FAST-LIO pose faster / jumpier than this = diverged -> map off for the rest of the run |
 | `cruise_vx` / `cruise_vx_min` / `turn_wz` | 0.20 / 0.20 / 0.40 | speeds (min = max: constant forward speed) |
 | `head_err_turn_deg` / `walk_wz_max` | 10 / 0.10 | turn on the spot above this heading error; steering while walking |
 | `wall_side` | left | wall-following side (arenas are mirrored) |
@@ -129,7 +134,7 @@ ROS_DOMAIN_ID=42 bash sim/run_ros_test.sh stairs 110  # same, with the stairs wo
 | `rc/guard.py` | stale feeds, tilt (stop / resume / latch), no reverse, front stop - nothing else |
 | `rc/stairs.py` | stairs detection (height levels) |
 | `rc/gait.py`, `rc/startup.py`, `rc/posture.py` | gait codes and sequences, start-up, sitting/standing, body height from the legs |
-| `rc/grid.py`, `rc/memory.py`, `rc/odom.py` | 1 m grid, short-term obstacle memory, leg odometry check |
+| `rc/grid.py`, `rc/liomap.py`, `rc/odom.py` | 1 m grid, local 3-D map placed with the FAST-LIO pose, leg odometry check |
 | `viewer/` | read-only web viewer (layers, server, page) |
 | `sim/` | pure-Python simulator, fake dog ROS node, wiring test |
 | `tools/` | `measure.py`, `extract_fixtures.py` (trial bags -> test frames), `bagread.py` |
@@ -178,3 +183,18 @@ refuses non-numbers for number parameters (`REFUSED: bad parameter ...`).
 
 **Frozen leg odometry in open space** is not recognised (it needs a wall within 2.9 m ahead to
 compare against); the dog then stops with `no_progress` HOLDs. Seen only in the simulator.
+
+## 7. 2026-11-23: FAST-LIO map instead of the short-term memory
+Live runs `20261123_033725/033854/034135` stalled in BLOCKED / `HOLD: blocked` with a clear path:
+the old memory kept ghost cells 0.2-0.5 m ahead of base_link (own legs, noise) where the lidar never
+sees floor. The FAST-LIO left running across those runs had diverged by km; a freshly started one
+tracked a 1.5 m walk forward and back to ~0.13 m. Now:
+- `run.py` restarts FAST-LIO per run; the map is our `/livox/points` placed with `/fastlio/odometry`
+  (FAST-LIO's own clouds are 0.5 m voxels), kept 3 m / 30 s, nothing nearer than 0.5 m to the sensor.
+- Lanes and the wall check use live scan + map; the **front stop uses the live scan only**.
+- Divergence check: the map switches off for the rest of the run (`lio BAD`, event `lio_bad`); the dog
+  then drives on the live scan. Replaying `034135` it fired at 12.8 s, before the km jump at 13.2 s.
+- The recorder also saves `/fastlio/odometry`, `/livox/lidar`, `/livox/imu` (FAST-LIO inputs).
+- Status line: `lio ok` / `lio -` (no fresh pose) / `lio BAD`.
+- Feed check before a run: `ros2 topic hz /imu/data` (~200) and `/livox/points` (~10); today they fell
+  to 24 -> 7.5 -> 3.9 Hz over three runs.

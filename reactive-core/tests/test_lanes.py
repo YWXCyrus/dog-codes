@@ -53,7 +53,7 @@ def test_points_behind_do_not_block():
 
 
 def test_width_override():
-    door = np.vstack([line(0.6, -2.0, 0.6, -0.30), line(0.6, 0.30, 0.6, 2.0)])   # 0.60 m
+    door = np.vstack([line(0.6, -2.0, 0.6, -0.275), line(0.6, 0.275, 0.6, 2.0)])   # 0.55 m: < lane_w 0.60, > 0.50
     s0 = [l for l in L.evaluate(door, np.zeros((0, 2)), CFG) if abs(l.heading) < 1e-9][0]
     s1 = [l for l in L.evaluate(door, np.zeros((0, 2)), CFG, width=0.50) if abs(l.heading) < 1e-9][0]
     assert not s0.free and s1.free

@@ -22,10 +22,20 @@ shank_m: 0.21
 leg_h_add: 0.0                       # added to the leg height (foot radius, hip offset)
 stairs_trust_m: 0.80                 # STAIRS mode: a patch's own ground is trusted within this of the stance floor
 
-# ---- odometry / short-term memory (spec sections 5, 8) ----
-mem_time_s: 10.0
-mem_dist_m: 3.0
-mem_tilt_max_deg: 10.0               # no memory adds while tilted more than this (ghost cells)
+# ---- FAST-LIO local map (replaces the short-term obstacle memory, 2026-11-23) ----
+lio_restart: true                    # run.py stops any running FAST-LIO and starts a fresh one per run (not with --sim)
+lio_cmd: ros2 launch lite3_launcher fast_lio.launch.py
+lio_topic: /fastlio/odometry         # nav_msgs/Odometry, lidar pose in lidar_init
+lio_wait_s: 10.0                     # start-up waits this long for the first FAST-LIO pose (else: live scan only)
+lio_blind_m: 0.50                    # map stores no point nearer than this to the sensor (own legs; FAST-LIO blind)
+lio_voxel_m: 0.05
+lio_radius_m: 3.0                    # map kept within this of the dog ...
+lio_time_s: 30.0                     # ... and this long
+lio_max_speed: 1.0                   # FAST-LIO pose faster than this (0.3 s window) = diverged -> map off for the run
+lio_jump_m: 0.50                     # ... or one pose step longer than this
+lio_stale_s: 0.50                    # map not used when the latest pose is older than this
+
+# ---- leg odometry (grid, progress check) ----
 odom_topic: /leg_odom
 odom_type: pose                      # pose = PoseWithCovarianceStamped (/leg_odom) | odometry = nav_msgs/Odometry (/leg_odom2)
 odom_jump_m: 0.30
@@ -34,7 +44,7 @@ odom_speed_factor: 1.5
 odom_speed_add: 0.30
 
 # ---- lanes / driving (spec section 6) ----
-lane_w: 0.70
+lane_w: 0.60                         # start bay walls at +0.45 / -0.55 m (run 20261123_034135): ~0.9 m free
 lane_w_min: 0.50
 lane_d: 1.0
 lane_fov_deg: 135                    # lanes evaluated within +-this (the rear is blind)

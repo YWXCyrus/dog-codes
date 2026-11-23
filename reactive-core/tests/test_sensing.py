@@ -136,12 +136,3 @@ def test_calibrate_floor():
 def test_empty_cloud():
     s = det(pts=np.zeros((0, 3)))
     assert s.obs.shape == (0, 2) and s.drops.shape == (0, 2)
-
-
-def test_scan_reports_ground_and_high_points_of_this_scan():
-    fl, box = H.floor(), H.box_top(2.0, 2.3, -0.3, 0.3, 0.30)
-    s = det(pts=np.vstack([fl, box]), frames=1)
-    high = box[box[:, 2] - H.FLOOR > CFG['step_limit']]               # box sides start at the floor
-    assert s.high_now.shape[0] == high.shape[0]
-    assert s.ground_now.shape[0] == fl.shape[0] + box.shape[0] - high.shape[0]
-    assert np.all(s.high_now[:, 0] > 1.9)

@@ -24,7 +24,7 @@ class DriverInput:
     t: float
     lanes: list
     obs: np.ndarray                     # persistent obstacles (body frame), for the wall-side check
-    mem: np.ndarray                     # short-term memory (body frame)
+    mem: np.ndarray                     # FAST-LIO map obstacle / drop cells (body frame); empty without it
     pose: tuple                         # odom frame (x, y, yaw)
     odom_ok: bool
     travelled: float
