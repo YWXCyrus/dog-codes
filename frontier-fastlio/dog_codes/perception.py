@@ -58,6 +58,9 @@ class Perception(Node):
             'hz_votes': 3, 'pos_mode': 'view', 'view_max_m': 1.0, 'hazard_pos_inset_m': 0.25,
             'qr_assist_max_s': 15.0, 'qr_assist_w_px': 140.0, 'qr_assist_speed': 0.07,
             'qr_persist_n': 3, 'qr_persist_s': 1.0, 'qr_persist_px': 50.0, 'qr_w_min': 20.0, 'qr_w_max': 700.0,
+            # standalone use without the frontier supervisor (e.g. next to reactive-core): no /quad/mode
+            # arrives, so start in this mode ('EXPLORE' enables the scene queries); /quad/mode still wins
+            'start_mode': 'IDLE', 'odom_topic': '/odom',
         })
         self.p = p
         self.qr_filter = C.QrPersist(p['qr_persist_n'], p['qr_persist_s'], p['qr_persist_px'],
@@ -67,7 +70,7 @@ class Perception(Node):
         self.speed = 0.0
         self.wz = 0.0
         self.have_odom = False
-        self.mode = 'IDLE'
+        self.mode = p['start_mode']
         self.img = None
         self.img_t = 0.0
         self.img_pose = (0, 0, 0)
@@ -109,14 +112,15 @@ class Perception(Node):
         self.ans_pub = self.create_publisher(String, '/quad/vlm_answer', 10)
         self.dbg_pub = self.create_publisher(String, '/quad/scene_state', 10)
         self.create_subscription(Image, p['image_topic'], self.on_image, C.SENSOR_QOS)
-        self.create_subscription(Odometry, '/odom', self.on_odom, C.SENSOR_QOS)
+        self.create_subscription(Odometry, p['odom_topic'], self.on_odom, C.SENSOR_QOS)
         self.create_subscription(PointCloud2, C.T_CLOUD, self.on_cloud, C.SENSOR_QOS)
         self.create_subscription(String, C.T_MODE, lambda m: setattr(self, 'mode', m.data), 10)
         self.create_subscription(String, '/quad/vlm_ask', self.on_ask, 10)
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.drain_results)
         self.create_timer(1.0, self.scheduler)
-        self.get_logger().info('perception up: group=%s tasks=%s' % (grp, list(self.mission)))
+        self.get_logger().info('perception up: group=%s tasks=%s mode=%s odom=%s'
+                               % (grp, list(self.mission), self.mode, p['odom_topic']))
 
     # ------------------------------------------------------------ config
     def load_mission(self, path):
