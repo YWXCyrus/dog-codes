@@ -9,6 +9,15 @@ server). This folder only adds a launch file so it can run **without** the front
 | frontier-fastlio | `mission.launch.py` already starts perception + reporter. Do not use this folder. |
 | reactive-core | start `perception.launch.py` in another terminal (below). |
 
+## Group id (with its PIN) - kept out of the repo
+The repo is public on GitHub, so the registered id is NOT in the code. Put it once in a file on the dog
+(replace with your registered id):
+```bash
+echo group02_XXXX > ~/.dog_group_id && chmod 600 ~/.dog_group_id
+```
+`perception.launch.py`, `mission.launch.py` and `qr-test` read it by default (the same full id goes to
+the scene server and the scoring server, booklet v6.3 E); `group_id:=...` still overrides it.
+
 ## With reactive-core
 ```bash
 # terminal 1: TA bring-up (camera, odom_relay /fastlio/odometry -> /odom, twist_mux)
@@ -17,7 +26,7 @@ ros2 launch lite3_launcher lite3.launch.py navigation:=False
 cd ~/dog-codes/reactive-core && python3 run.py --live
 # terminal 3: AFTER run.py printed "Ready" (it restarts FAST-LIO; /odom then starts at the dog's start)
 source /opt/ros/humble/setup.bash && export ROS_DOMAIN_ID=1
-ros2 launch ~/dog-codes/perception/perception.launch.py group_id:=<registered id>
+ros2 launch ~/dog-codes/perception/perception.launch.py
 ```
 Arguments: `dry_run:=true` (reporter logs the JSON, sends nothing), `scene_enabled:=false` (no
 scene-server queries), `report_url:=`, `scene_server:=`, `start_mode:=` (default `EXPLORE`),

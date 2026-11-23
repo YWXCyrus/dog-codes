@@ -11,14 +11,14 @@ cd ~/dog-codes/qr-test
 python3 qr_test.py selftest                      # synthetic QR codes: which sizes / angles decode
 python3 qr_test.py image a.png b.jpg             # decode saved pictures
 export ROS_DOMAIN_ID=1                           # the dog (read-only camera subscriber)
-python3 qr_test.py --group-id group02_XXXX live  # dog camera: hold a QR code in front of it
+python3 qr_test.py live                          # dog camera: hold a QR code in front of it
 ```
 
 `live` prints every newly decoded text and the JSON that would be sent, and saves it with a snapshot
 in `out/<time>/` (`payloads.jsonl`, `qr_N.jpg`). It is a **dry run** unless you add `--post`:
 
 ```bash
-python3 qr_test.py --group-id <registered id> live --post     # really POSTs to the scoring server
+python3 qr_test.py live --post                   # really POSTs to the scoring server
 ```
 `--post` refuses the placeholder group id. Only the latest submission per task id counts on the
 server, so do not post test codes on competition day.

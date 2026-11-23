@@ -282,7 +282,12 @@ def live(args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--group-id', default='group02_XXXX', help='registered group id (as in mission.launch.py)')
+    gid = 'group02_XXXX'
+    try:
+        gid = open(os.path.expanduser('~/.dog_group_id')).read().strip() or gid   # outside the public repo
+    except OSError:
+        pass
+    ap.add_argument('--group-id', default=gid, help='registered group id (default: ~/.dog_group_id)')
     ap.add_argument('--task-id', default='M04', help='task id of the QR task (M04 in config/mission.yaml)')
     sub = ap.add_subparsers(dest='cmd', required=True)
     s = sub.add_parser('selftest')

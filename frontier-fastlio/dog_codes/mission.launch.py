@@ -3,7 +3,7 @@
   # terminal 1 (TA bringup, no Nav2):
   ros2 launch lite3_launcher lite3.launch.py navigation:=False
   # terminal 2:
-  ros2 launch ~/dog-codes/frontier-fastlio/dog_codes/mission.launch.py group_id:=group02_XXXX
+  ros2 launch ~/dog-codes/frontier-fastlio/dog_codes/mission.launch.py
   # then, with the dog on the hoist and someone on STOP:
   ros2 topic pub --once /quad/arm std_msgs/msg/Bool "{data: true}"
 
@@ -22,9 +22,20 @@ NODES = ['safety_gate', 'cloud_proc', 'explorer', 'terrain', 'curtain', 'percept
          'supervisor']
 
 
+def local_group_id():
+    """Registered group id (group##_XXXX, with its PIN) from ~/.dog_group_id - kept OUT of the repo,
+    which is public on GitHub. Placeholder if the file is missing (the nodes then log an error)."""
+    try:
+        with open(os.path.expanduser('~/.dog_group_id')) as f:
+            gid = f.read().strip()
+        return gid or 'group02_XXXX'
+    except OSError:
+        return 'group02_XXXX'
+
+
 def generate_launch_description():
     ld = LaunchDescription([
-        DeclareLaunchArgument('group_id', default_value='group02_XXXX'),
+        DeclareLaunchArgument('group_id', default_value=local_group_id()),
         DeclareLaunchArgument('dry_run', default_value='false'),
         DeclareLaunchArgument('final_topic', default_value='/final_cell_reached'),
         DeclareLaunchArgument('scene_server', default_value='http://192.168.10.141:8000'),
