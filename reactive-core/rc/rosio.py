@@ -53,6 +53,9 @@ class RosIO:
         n.create_subscription(Odometry, '/odom', self.on_fastlio, SENSOR_QOS)
         n.create_subscription(Odometry, cfg['lio_topic'], self.on_lio, SENSOR_QOS)
         n.create_subscription(TFMessage, '/tf_static', self.on_tf_static, TF_STATIC_QOS)
+        if cfg['qr_approach']:
+            # perception (perception/perception.launch.py) -> QR located / read, for the QR approach
+            n.create_subscription(String, '/quad/event', self.on_quad_event, 20)
         self.status_pub = n.create_publisher(String, '/rc/status', 10)
         self.cmd_pub = None
         self.simple_pub = None
@@ -104,6 +107,15 @@ class RosIO:
         p, q = m.pose.pose.position, m.pose.pose.orientation
         with self.lock:
             self.core.on_lio((p.x, p.y, p.z), (q.x, q.y, q.z, q.w), time.monotonic())
+
+    def on_quad_event(self, m):
+        try:
+            d = json.loads(m.data)
+        except ValueError:
+            return
+        if isinstance(d, dict) and str(d.get('type', '')).startswith('qr_'):
+            with self.lock:
+                self.core.on_qr_event(d, time.monotonic())
 
     def on_tf_static(self, m):
         for tf in m.transforms:

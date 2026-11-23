@@ -274,13 +274,16 @@ class Perception(Node):
             self.emit('M04', 'qr', scene=self.scene_now(C.cell_of(pose[0], pose[1])), message=text,
                       score=1.0, src='qr')
             self.evt_pub.publish(C.jmsg({'type': 'qr_decoded', 'text': text,
-                                         'hint': self.m05_scene_hint}))
+                                         'hint': self.m05_scene_hint,
+                                         'w': round(w, 1), 'cx': round(c[0], 1), 'cy': round(c[1], 1)}))
             self.assign_survivors()
         else:
             if not self.qr_filter.update(time.monotonic(), w, c[0]):
                 return                      # implausible or a one-frame flicker: do not chase it
             self.qr_seen = {'w': w, 'cx': c[0], 't': time.monotonic()}
-            self.evt_pub.publish(C.jmsg({'type': 'qr_seen', 'w': round(w, 1), 'cx': round(c[0], 1)}))
+            # cy: reactive-core's QR approach stops getting closer when the code nears the picture top
+            self.evt_pub.publish(C.jmsg({'type': 'qr_seen', 'w': round(w, 1), 'cx': round(c[0], 1),
+                                         'cy': round(c[1], 1)}))
 
     def qr_assist(self):
         if self.mode != 'QR_APPROACH':

@@ -34,7 +34,8 @@ from rc import config  # noqa: E402
 
 RECORD_TOPICS = ['/livox/points', '/leg_odom', '/leg_odom2', '/odom', '/imu/data', '/joint_states',
                  '/nav_cmd_vel', '/cmd_vel', '/simple_cmd', '/tf_static', '/rc/status',
-                 '/fastlio/odometry', '/livox/lidar', '/livox/imu']     # FAST-LIO output + its raw inputs
+                 '/fastlio/odometry', '/livox/lidar', '/livox/imu',     # FAST-LIO output + its raw inputs
+                 '/quad/event', '/quad/report']                         # perception (QR approach, results)
 CAMERA_TOPIC = '/camera/color/image_raw'
 FEED_LOST_EXIT_S = 5.0
 

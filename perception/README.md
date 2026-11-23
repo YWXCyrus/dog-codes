@@ -30,8 +30,10 @@ answer) and `run_logs/snaps/` (the camera picture behind each result).
 - **Never moves the dog.** Perception only drives (towards an unreadable QR) in mode `QR_APPROACH`,
   which only the frontier supervisor sets, and it publishes on `/quad/cmd_vel`, which reactive-core
   does not use.
-- **No QR approach.** reactive-core does not stop or turn towards a QR code; the code is only read
-  if the wall following brings the camera within ~0.5 m, facing it (`qr-test/README.md`).
+- **QR approach is done by reactive-core** (mode QR, `reactive-core/README.md`): perception publishes
+  `qr_seen` (located, not read: `w`, `cx`, `cy`) and `qr_decoded` on `/quad/event`; reactive-core
+  turns and steps towards the code and stands still in front of it until it is read. Codes mounted
+  higher than ~0.45 m cannot be read from close up with the 20 deg down-tilted camera.
 - **Hazard positions are coarser:** `/quad/cloud` (frontier `cloud_proc`) is missing, so the
   distance to a sign falls back to ~0.75 m ahead of the dog.
 - **Room type (`scene_type`)** comes from the scene server; without an answer perception reports

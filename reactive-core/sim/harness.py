@@ -29,7 +29,8 @@ class SimResult:
 
 
 def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0, dt=0.05,
-             resume_on_hold=False, verbose=False):
+             resume_on_hold=False, verbose=False, qr_cam=None):
+    """qr_cam: optional sim.qrcam.QrCam (simulated camera + perception -> core.on_qr_event, ~6 Hz)."""
     dog = DogModel(world, *start, seed=seed, **(dog_kwargs or {}))
     lidar = Lidar(mount_xyz=cfg['mount_xyz'], mount_pitch_deg=cfg['mount_pitch_deg'], seed=seed)
     core = Core(cfg)
@@ -46,6 +47,9 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
         n, p, v = dog.joints()
         core.on_joints(n, p, v, t)
         core.on_odom(*dog.leg_odom(), t)
+        if qr_cam is not None and k % 3 == 0:
+            for ev in qr_cam.observe(dog, t):
+                core.on_qr_event(ev, t)
         if k % 2 == 0:
             pts = lidar.scan(world, dog.x, dog.y, dog.base_z(), dog.yaw, dog.roll, dog.pitch)
             core.on_cloud(pts, t)

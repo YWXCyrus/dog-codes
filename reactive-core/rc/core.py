@@ -112,6 +112,12 @@ class Core:
         self.odom.update(x, y, yaw, t, abs(self.last_cmd.vx))
         self.arrival['odom'] = t
 
+    def on_qr_event(self, d, t):
+        """A perception event from /quad/event (qr_seen / qr_decoded) for the QR approach."""
+        text = self.driver.qr.on_event(d, t)
+        if text is not None:
+            self.pending_events.append({'t': round(t, 2), 'qr_read': text})
+
     def on_lio(self, pos, quat, t):
         bad = self.lio.on_pose(pos, quat, t)
         if bad is not None:

@@ -1,6 +1,7 @@
 """Driving state machine (spec sections 6 and 9.3).
 
-Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT).
+Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT),
+QR (phases LOOK, TURN, STEP, READ; rc/qr.py).
 The driver only proposes a command; the guard (rc/guard.py) filters every command afterwards.
 Headings in lanes are body-relative (0 = straight ahead, + = left); targets are stored as
 odom-frame yaw so they survive the dog's own rotation.
@@ -14,9 +15,10 @@ import numpy as np
 from rc import gait as Gt
 from rc import geometry as G
 from rc.guard import Cmd
+from rc.qr import QrApproach
 from rc.stairs import StairsResult
 
-CRUISE, TURN, BLOCKED, HOLD, STAIRS = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS'
+CRUISE, TURN, BLOCKED, HOLD, STAIRS, QR = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS', 'QR'
 
 
 @dataclass
@@ -78,6 +80,7 @@ class Driver:
         self.odom_frozen = False        # leg odometry did not move while the lidar saw us move
         self.cmd_dist = 0.0             # distance by the guarded command (fallback when odometry is frozen)
         self._last_step_t = None
+        self.qr = QrApproach(cfg, self._ev)      # QR approach (task M04), fed by core.on_qr_event
 
     # ---------------------------------------------------------------- helpers
     def _dist(self, di):
@@ -232,6 +235,19 @@ class Driver:
         if self.mode == STAIRS:
             return self._out(self._stairs(di, dyaw))
 
+        obs_body = np.vstack([np.asarray(di.obs, dtype=float).reshape(-1, 2),
+                              np.asarray(di.mem, dtype=float).reshape(-1, 2)])
+        if self.mode == QR:
+            cmd = self.qr.step(t, di.pose, di.front_dist, obs_body)
+            if cmd is not None:
+                self.phase = self.qr.phase
+                return self._out(cmd)
+            self.mode, self.phase = CRUISE, ''        # approach over: back to wall following
+            self.target_yaw = None
+            self.prog.clear()
+        elif self.qr.active:
+            self.qr.abort(t)                          # left QR through a HOLD
+
         # ---- stairs triggers (normal modes) ----
         st = di.stairs
         if c['stairs'] != 'off' and not self.stairs_done:
@@ -249,6 +265,13 @@ class Driver:
                 return self._out(Cmd())
             elif st.kind in ('up', 'unsure') and c['stairs'] == 'detect':
                 self._ev(t, stairs_seen=st.kind, edge=round(st.edge_x, 2))
+
+        # ---- QR approach trigger (after the stairs: they win) ----
+        if c['qr_approach'] and di.odom_ok and self.qr.wants(t, di.pose, obs_body):
+            self.qr.start(t, di.pose)
+            self.mode, self.phase = QR, self.qr.phase
+            self.prog.clear()
+            return self._out(Cmd())
 
         if self._progress(di):
             cell = self.grid.current

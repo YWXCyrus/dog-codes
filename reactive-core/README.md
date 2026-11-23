@@ -98,6 +98,30 @@ the run folder. The ones to tune on the course:
 | `odom_topic` / `odom_type` | /leg_odom / pose | position source (`/leg_odom2` + `odometry` as alternative) |
 | `simple_cmd_qos` | volatile | `transient_local` if gait codes do not arrive |
 
+### QR approach (task M04, `rc/qr.py`)
+Needs perception running next to `run.py` (`perception/perception.launch.py`, start it after "Ready").
+Perception reads QR codes by itself; when it only *locates* one it cannot read (too far / off to the
+side), it says so on `/quad/event`, and the driver switches to mode **QR**:
+
+`LOOK` (stand still 0.4 s, then measure: sharp pictures, no latency) -> `TURN` (face it, on the gyro)
+-> `STEP` (walk part of the way, on the leg odometry) -> `LOOK` ... -> `READ` (stand in front of it
+up to 3 s) -> back to wall following. Status line: `QR LOOK`, `QR STEP` ...
+Events in `decisions.jsonl`: `qr: start / read / decoded / unreadable / lost / timeout /
+no_room_to_turn` and `qr_read: <text>`.
+
+- Located shapes wider than `qr_seek_w_max` (190 px) are false locations on panels and frames (a real
+  QR that big is read) and are never chased; 2 stable sightings within 1 s start an approach.
+- At most `qr_max_attempts` (3) per run, `qr_max_s` (30 s) each; a failed spot is not tried again
+  (`qr_blacklist_m`), 15 s cool-down. Off for the rest of the run once any QR was read.
+- Never closer than `qr_front_min_m` (0.55 m free ahead of base_link), no turn on the spot with an
+  obstacle within `qr_turn_clear_m` (0.42 m); the guard still filters every command.
+- **Mounting height limit (camera tilted 20 deg down, picture top = 7.3 deg above horizontal):** a
+  15 cm QR can only be read from close up if its top edge is below ~0.45 m. Higher codes rise out of
+  the picture first; the dog then stops there (`why: top_of_picture`) and gives up after 3 s. Above
+  ~0.85 m a code is not even in the picture from 3 m away. **Check the QR height on the course.**
+- `--set qr_approach=false` turns it off. Simulator: `tests/test_qr.py` (simulated camera +
+  perception, `sim/qrcam.py`): a 0.30 m-high QR 0.5 m off-axis 2.7 m away is read in ~20 s.
+
 ### Optional checks
 - `python3 run.py --live --gait-test ai_basic` — dog standing in open floor, e-stop held: start-up,
   Enter AI -> AI Basic -> turn test -> 1 s forward at 0.1 m/s -> Exit AI -> RUG general -> turn test,

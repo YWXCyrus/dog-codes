@@ -76,6 +76,35 @@ tilt_latch_deg: 60                   # above: the dog is going over - stopped un
 # ---- grid (spec section 8) ----
 cell_m: 1.0
 
+# ---- QR approach (rc/qr.py; needs perception/perception.launch.py running) ----
+qr_approach: true                    # go to a QR that perception located but could not read
+qr_fx: 462.6                         # camera (/camera/color/camera_info)
+qr_cx0: 320.1
+qr_cy0: 238.4
+qr_cam_pitch_deg: 20.0               # camera tilt down (/tf_static base_link -> camera_link)
+qr_size_m: 0.15                      # assumed QR side, only when the lidar gives no distance
+qr_seek_w_min: 22                    # located-not-read width (px) worth approaching ...
+qr_seek_w_max: 190                   # ... wider ones are false locations (a real one would be read)
+qr_trigger_n: 2                      # qr_seen events within 1 s to start
+qr_target_w: 190                     # get close until the QR is this wide (reads reliably from ~165)
+qr_top_margin_px: 10                 # QR top edge this close to the picture top: closer is impossible
+qr_front_min_m: 0.55                 # free distance ahead (from base_link) not to go below
+qr_turn_clear_m: 0.42                # no turn on the spot with an obstacle nearer than this
+qr_step_max_m: 0.35                  # step length close up ...
+qr_step_frac: 0.6                    # ... or this share of the distance to the QR, if longer
+qr_vx: 0.12                          # last 0.4 m of a step
+qr_vx_far: 0.20                      # before that
+qr_wz: 0.30
+qr_align_deg: 5.0
+qr_settle_s: 0.40                    # standing still this long before a picture counts (blur, latency)
+qr_look_s: 0.60
+qr_look_max_s: 2.0                   # nothing seen while standing still this long = lost
+qr_read_s: 3.0                       # standing in front of it, waiting for perception to read it
+qr_max_s: 30.0                       # per attempt
+qr_max_attempts: 3                   # per run
+qr_cooldown_s: 15.0                  # after a failed attempt
+qr_blacklist_m: 0.8                  # a failed target is not tried again within this
+
 # ---- stairs (spec section 9) ----
 stairs: climb                        # off | detect | climb
 stair_rise_min: 0.08
