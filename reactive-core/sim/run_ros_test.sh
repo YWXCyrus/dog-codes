@@ -13,7 +13,8 @@ RUN_S=${2:-60}
 OUT=$(mktemp -d /tmp/rc_rostest_XXXX)
 echo "output: $OUT"
 
-python3 -B sim/fake_dog_node.py --world "$WORLD" --sitting --summary "$OUT/dog.json" > "$OUT/dog.log" 2>&1 &
+# the dog starts standing: the operator stands it up by controller (start-up sends nothing since 9ee2599)
+python3 -B sim/fake_dog_node.py --world "$WORLD" --summary "$OUT/dog.json" > "$OUT/dog.log" 2>&1 &
 DOG=$!
 sleep 3
 timeout -s INT $((RUN_S + 45)) python3 -B run.py --sim --auto-go --no-viewer \
@@ -40,7 +41,9 @@ r = runs[0] if runs else ''
 check(os.path.exists(os.path.join(r, 'decisions.jsonl')), 'decisions.jsonl written')
 check(os.path.exists(os.path.join(r, 'snapshots.jsonl')), 'snapshots.jsonl written')
 check(os.path.exists(os.path.join(r, 'bag', 'metadata.yaml')), 'recorder bag closed (metadata.yaml)')
-check(codes.count('stand_sit') == 1, 'exactly one Stand/Sit toggle (dog started sitting): %s' % codes)
+check('stand_sit' not in codes, 'no Stand/Sit sent: %s' % codes)
+log = open(os.path.join(out, 'run.log')).read()
+check('from the leg joints' in log, 'floor measured from the leg joints')
 check(dog['posture'] == 'standing', 'dog standing at the end')
 check(dog['collisions'] == 0, 'no collisions (%d)' % dog['collisions'])
 check(not dog['reversed'], 'never reversed')

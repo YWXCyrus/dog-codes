@@ -24,20 +24,22 @@ ros2 launch lite3_launcher lite3.launch.py navigation:=False
 # terminal 2:
 cd ~/dog-codes/reactive-core
 python3 run.py                      # 1) DRY RUN first: everything runs, NOTHING is sent to the dog
-python3 run.py --live --set cruise_vx=0.12 --set run_time_s=120     # 2) first real run: slower, 2 min
+python3 run.py --live --set run_time_s=60      # 2) first real run: 1 min, e-stop held
 python3 run.py --live               # normal run
 ```
 
 `--live` refuses to start unless `ROS_DOMAIN_ID=1` and someone subscribes `/nav_cmd_vel` (the TA
-bring-up). Auto mode must be on in the app (otherwise the start-up turn test fails and says so).
+bring-up). Before every run: auto mode on (`lite3_auto`), stand the dog up and choose RUG general
+with the controller - start-up sends nothing to the dog.
 
 ### What happens
-1. Start-up (printed line by line): feeds alive (`/livox/points`, `/imu/data`, `/joint_states`,
-   `/leg_odom`) -> posture from the knees: sitting -> ONE Stand/Sit toggle; unclear (after a STOP) ->
-   exit -> RUG general (sent twice) -> turn test (1 s at 0.3 rad/s, the gyro must see it) -> floor
-   height check -> **"Ready. Press Enter to go"**.
+1. Start-up: the four feeds (`/livox/points`, `/imu/data`, `/joint_states`, `/leg_odom`) arrive for
+   1 s -> `floor 0.327 m below base_link (from the leg joints)` -> **"Ready. Press Enter to go"**.
+   Nothing is sent to the dog during start-up.
 2. Enter: autonomous. Status line every ~2 s:
-   `[  42.0s] CRUISE  cell (1,3) N  front 1.20 m  tilt 4.1  odom ok  stairs none  wall left`
+   `[  42.0s] CRUISE  cell (1,3) N  front 1.20 m  tilt 4.1  floor 0.33  odom ok  stairs none  wall left`
+   Driving: constant `cruise_vx` (0.20 m/s); heading error above `head_err_turn_deg` (10 deg) ->
+   turn on the spot, below it small steering while walking (max `walk_wz_max` 0.10 rad/s).
    Grid: start (0,0), +y = the start heading ("N"), +x = right, 1 m cells.
 3. Stairs: confident stairs ahead -> APPROACH (square to the steps, 0.6 m short) -> ENTER
    (Enter AI -> AI Basic -> turn test) -> ALIGN -> CLIMB -> DESCEND -> EXIT (Exit AI -> Move Mode ->
@@ -47,14 +49,17 @@ bring-up). Auto mode must be on in the app (otherwise the start-up turn test fai
 
    | reason | meaning |
    |---|---|
-   | `blocked` | no free lane all round / both turn directions blocked |
+   | `blocked` | no free lane after a full turn on the spot |
    | `no_progress` | sent forward 3 s but did not move (marked as dead end) |
    | `time` | `run_time_s` reached |
    | `stairs_unsure` | something stair-like, not sure -> Captain decides |
    | `ai_no_response` | AI Basic did not obey `/cmd_vel` (turn test); AI already exited -> Captain takes the stairs |
    | `rug_no_response` | after Exit AI the dog does not respond; Enter retries the exit sequence |
-   | `stairs_no_progress`, `stairs_tilt`, `stairs_timeout`, `stairs_lost` | trouble on the stairs: the dog stays in AI Basic (never exits AI on a step) |
-   | `tilt_latch` | tilt above 30 deg for 0.5 s, or above 45 deg (40 deg pitch on stairs): latched until restart |
+   | `stairs_no_progress`, `stairs_timeout`, `stairs_lost` | trouble on the stairs: the dog stays in AI Basic (never exits AI on a step) |
+   | `tilt_latch` | tilt above 60 deg (the dog going over): latched until restart |
+
+   Not a HOLD: tilt above 35 deg zeroes the command until the tilt is back below 30 deg, then the dog
+   drives on by itself (`tilt_stop` in the logs).
 
 5. Ctrl+C: zero speed for 1 s, recorder closed, exit. The dog stays standing.
 6. Feed lost / posture unclear for 5 s (STOP pressed): the script exits.
@@ -72,15 +77,18 @@ the run folder. The ones to tune on the course:
 |---|---|---|
 | `step_limit` | 0.25 | higher than this above the local ground = obstacle (strips below it are walked over) |
 | `lane_w` | 0.70 | lane width; must fit the doorways (min 0.50) |
-| `cruise_vx` / `turn_wz` | 0.18 / 0.40 | speeds |
+| `cruise_vx` / `cruise_vx_min` / `turn_wz` | 0.20 / 0.20 / 0.40 | speeds (min = max: constant forward speed) |
+| `head_err_turn_deg` / `walk_wz_max` | 10 / 0.10 | turn on the spot above this heading error; steering while walking |
 | `wall_side` | left | wall-following side (arenas are mirrored) |
-| `stop_m` / `slow_m` | 0.35 / 0.80 | front guard (from the sensor) |
-| `footprint_l` / `footprint_w` / `base_offset_x` | 0.65 / 0.42 / 0.0 | turn-sweep footprint (measure the dog) |
+| `stop_m` | 0.24 | front stop, from the sensor (nose ~0.14 m ahead of it -> ~0.10 m gap); no slow zone. Walls at lidar height vanish inside `near_drop_m`, so in practice it stops at ~0.30 m |
+| `near_drop_m` | 0.30 | lidar returns closer than this to the sensor are dropped (zero-range blob; at 0.15 the front legs caused false front stops) |
+| `footprint_w` | 0.42 | front-stop corridor width |
+| `persist_k` / `persist_n` | 1 / 1 | obstacle cell seen in k of the last n scans (1/1 = this scan only) |
+| `floor_src` / `leg_h_add` | legs / 0.0 | floor = body height from the leg joints (`fixed` = `body_h_default`) |
 | `stairs` | climb | `off` / `detect` (log only) / `climb` |
 | `stair_rise_min` / `stair_rise_max` / `stair_tread_min` | 0.08 / 0.20 / 0.15 | stair geometry limits |
 | `stair_vx_up` / `stair_vx_down` | 0.15 / 0.10 | stair speeds |
-| `tilt_stop_deg` / `tilt_stop_stairs_deg` | 20 / 35 | tilt stop (stairs: pitch; roll keeps 20) |
-| `tilt_push_s` / `tilt_latch_s` / `tilt_latch_hard_deg` | 1.0 / 0.5 / 45 | flat ground: keep walking forward through a tilt spike this long; latch only after this long above `tilt_latch_deg`; immediate latch above this |
+| `tilt_stop_deg` / `tilt_resume_deg` / `tilt_latch_deg` | 35 / 30 / 60 | stop above, drive on by itself below resume (must stay above the ~27 deg stair slope), latch above |
 | `run_time_s` | 0 (off) | HOLD after this many seconds |
 | `odom_topic` / `odom_type` | /leg_odom / pose | position source (`/leg_odom2` + `odometry` as alternative) |
 | `simple_cmd_qos` | volatile | `transient_local` if gait codes do not arrive |
@@ -118,9 +126,9 @@ ROS_DOMAIN_ID=42 bash sim/run_ros_test.sh stairs 110  # same, with the stairs wo
 | `rc/core.py` | wires everything: sensors in, guarded command + gait codes out |
 | `rc/sensing.py`, `rc/attitude.py` | IMU levelling, local ground (stance-floor fallback), obstacle / drop cells |
 | `rc/lanes.py`, `rc/driver.py` | lane rule, wall following, HOLD, stairs sequence |
-| `rc/guard.py` | front stop/slow, no reverse, turn sweep, stale feeds, tilt |
+| `rc/guard.py` | stale feeds, tilt (stop / resume / latch), no reverse, front stop - nothing else |
 | `rc/stairs.py` | stairs detection (height levels) |
-| `rc/gait.py`, `rc/startup.py`, `rc/posture.py` | gait codes and sequences, start-up, sitting/standing |
+| `rc/gait.py`, `rc/startup.py`, `rc/posture.py` | gait codes and sequences, start-up, sitting/standing, body height from the legs |
 | `rc/grid.py`, `rc/memory.py`, `rc/odom.py` | 1 m grid, short-term obstacle memory, leg odometry check |
 | `viewer/` | read-only web viewer (layers, server, page) |
 | `sim/` | pure-Python simulator, fake dog ROS node, wiring test |

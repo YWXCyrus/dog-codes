@@ -5,7 +5,7 @@
 # ---- sensing (spec section 5) ----
 mount_xyz: [0.18678, 0.0, 0.12498]   # base_link -> livox_frame, from /tf_static (session 1)
 mount_pitch_deg: 15.0                # replaced by /tf_static when it arrives
-near_drop_m: 0.30                    # drop points this close to the sensor (zero-range blob)
+near_drop_m: 0.30                    # drop points this close to the sensor (zero-range blob; 0.15 let the front legs in: 103 vs 32 front stops replaying run 113959)
 max_range_m: 6.0
 patch_m: 0.30                        # local-ground patch size
 ground_pct: 10                       # local ground = this percentile of a patch's heights
@@ -13,14 +13,19 @@ step_limit: 0.25                     # higher than this above local ground = obs
 obs_h_max: 1.20                      # above local ground; higher returns (ceiling) ignored
 n_min: 5                             # points needed in a cell to call it an obstacle
 obs_cell_m: 0.10
-persist_k: 3                         # obstacle cell must be seen in persist_k ...
-persist_n: 5                         # ... of the last persist_n scans
-body_h_default: 0.32                 # base_link height above the floor (fixed, no calibration)
+persist_k: 1                         # obstacle cell must be seen in persist_k ... (1/1 = off, 2026-11-23)
+persist_n: 1                         # ... of the last persist_n scans
+body_h_default: 0.32                 # base_link height above the floor until the legs give one (floor_src fixed: always)
+floor_src: legs                      # legs = body height from /joint_states (follows the controller height) | fixed
+thigh_m: 0.20                        # Lite3_rl_deploy lite3_control_parameters.cpp
+shank_m: 0.21
+leg_h_add: 0.0                       # added to the leg height (foot radius, hip offset)
 stairs_trust_m: 0.80                 # STAIRS mode: a patch's own ground is trusted within this of the stance floor
 
 # ---- odometry / short-term memory (spec sections 5, 8) ----
 mem_time_s: 10.0
 mem_dist_m: 3.0
+mem_tilt_max_deg: 10.0               # no memory adds while tilted more than this (ghost cells)
 odom_topic: /leg_odom
 odom_type: pose                      # pose = PoseWithCovarianceStamped (/leg_odom) | odometry = nav_msgs/Odometry (/leg_odom2)
 odom_jump_m: 0.30
@@ -36,11 +41,11 @@ lane_fov_deg: 135                    # lanes evaluated within +-this (the rear i
 lane_step_deg: 15
 rate_hz: 10.0                        # driver decisions
 cmd_rate_hz: 20.0                    # command output
-cruise_vx: 0.18
-cruise_vx_min: 0.10
+cruise_vx: 0.20
+cruise_vx_min: 0.20                   # = cruise_vx: constant speed
 turn_wz: 0.40
-walk_wz_max: 0.20
-head_err_turn_deg: 30
+walk_wz_max: 0.10                    # small steering while walking
+head_err_turn_deg: 10                # larger heading error: turn on the spot first
 commit_s: 2.0
 wall_side: left                      # left | right (arenas are mirrored)
 wall_dist_m: 0.60
@@ -49,25 +54,14 @@ progress_s: 3.0
 progress_ratio: 0.2
 run_time_s: 0.0                      # > 0: HOLD after this many seconds (0 = off)
 
-# ---- guard (spec section 7) ----
-stop_m: 0.35                         # from the front of the sensor
-slow_m: 0.80
+# ---- guard (spec section 7): stale feeds, tilt, no reverse, front stop - nothing else ----
+stop_m: 0.24                         # from the sensor: nose ~0.14 m ahead of it -> ~0.10 m nose gap
 guard_corridor_margin_m: 0.05
-footprint_l: 0.65                    # body 0.548 x 0.370 (doc 01) + feet/head allowance (MEASURE)
-footprint_w: 0.42
-base_offset_x: 0.0                   # footprint centre relative to base_link along x (MEASURE)
-sweep_margin_m: 0.10
-sweep_dt_s: 0.5
+footprint_w: 0.42                    # front-stop corridor width (+ margin)
 stale_s: 0.30
-tilt_slow_deg: 15
-tilt_stop_deg: 20
-tilt_latch_deg: 30
-tilt_push_s: 1.0                     # walking forward when the tilt rose: keep going (no turning) this long before slow/stop
-tilt_latch_s: 0.5                    # latch only if above tilt_latch_deg this long (a step passes, a fall stays)
-tilt_latch_hard_deg: 45              # above this: latch at once
-tilt_stop_stairs_deg: 35             # STAIRS: pitch limit (stair slope 0.15/0.30 = 27 deg); roll keeps tilt_stop_deg
-tilt_latch_stairs_deg: 40
-wz_no_memory: 0.20
+tilt_stop_deg: 35                    # above: zero command (flat and stairs; stair slope ~27 deg) ...
+tilt_resume_deg: 30                  # ... until below this, then it drives on by itself (must be above the stair slope ~27 deg)
+tilt_latch_deg: 60                   # above: the dog is going over - stopped until restart
 
 # ---- grid (spec section 8) ----
 cell_m: 1.0

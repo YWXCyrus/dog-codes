@@ -107,15 +107,24 @@ def test_ceiling_ignored():
 def test_persistence():
     wall = np.vstack([H.floor(), H.wall_x(1.0, -0.4, 0.4)])
     empty = H.floor()
-    d = ObstacleDetector(CFG)
+    c35 = dict(CFG, persist_k=3, persist_n=5)
+    d = ObstacleDetector(c35)
     seq = [wall, empty, wall, empty, empty]
     for i, p in enumerate(seq):
         s = d.update(p, H.FLOOR, i * 0.1)
     assert ahead(s.obs, 0.9, 1.1).shape[0] == 0            # 2 of 5
-    d = ObstacleDetector(CFG)
+    d = ObstacleDetector(c35)
     for i, p in enumerate([wall, empty, wall, empty, wall]):
         s = d.update(p, H.FLOOR, i * 0.1)
     assert ahead(s.obs, 0.9, 1.1).shape[0] > 0             # 3 of 5
+
+
+def test_default_persistence_off():
+    # default 1 of 1 (2026-11-23): this scan only
+    wall = np.vstack([H.floor(), H.wall_x(1.0, -0.4, 0.4)])
+    d = ObstacleDetector(CFG)
+    assert ahead(d.update(wall, H.FLOOR, 0.0).obs, 0.9, 1.1).shape[0] > 0
+    assert ahead(d.update(H.floor(), H.FLOOR, 0.1).obs, 0.9, 1.1).shape[0] == 0
 
 
 def test_calibrate_floor():
@@ -127,3 +136,12 @@ def test_calibrate_floor():
 def test_empty_cloud():
     s = det(pts=np.zeros((0, 3)))
     assert s.obs.shape == (0, 2) and s.drops.shape == (0, 2)
+
+
+def test_scan_reports_ground_and_high_points_of_this_scan():
+    fl, box = H.floor(), H.box_top(2.0, 2.3, -0.3, 0.3, 0.30)
+    s = det(pts=np.vstack([fl, box]), frames=1)
+    high = box[box[:, 2] - H.FLOOR > CFG['step_limit']]               # box sides start at the floor
+    assert s.high_now.shape[0] == high.shape[0]
+    assert s.ground_now.shape[0] == fl.shape[0] + box.shape[0] - high.shape[0]
+    assert np.all(s.high_now[:, 0] > 1.9)

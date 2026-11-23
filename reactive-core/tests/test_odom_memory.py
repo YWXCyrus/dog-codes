@@ -84,3 +84,38 @@ def test_memory_clear():
     m.add(np.array([[1.0, 0.0]]), (0, 0, 0), 0.0, 0.0)
     m.clear()
     assert m.query((0, 0, 0), 0.0, 0.0).shape[0] == 0
+
+
+# ---- clearing by the current scan (ghost cells must not block lanes the lidar sees as free) ----
+
+def _ground(x, y, n=4):
+    return np.array([[x + 0.01 * i, y] for i in range(n)])
+
+
+def test_memory_cleared_where_scan_sees_open_ground():
+    m = ObstacleMemory(CFG)
+    m.add(np.array([[0.55, 0.05]]), (0, 0, 0), 0.0, 0.0)
+    assert m.clear_seen(_ground(0.52, 0.03), np.zeros((0, 2)), (0, 0, 0)) == 1
+    assert m.query((0, 0, 0), 0.1, 0.0).shape[0] == 0
+
+
+def test_memory_kept_where_scan_sees_an_obstacle_too():
+    m = ObstacleMemory(CFG)
+    m.add(np.array([[0.55, 0.05]]), (0, 0, 0), 0.0, 0.0)
+    assert m.clear_seen(_ground(0.52, 0.03), np.array([[0.56, 0.06]]), (0, 0, 0)) == 0
+    assert m.query((0, 0, 0), 0.1, 0.0).shape[0] == 1
+
+
+def test_memory_kept_where_scan_sees_nothing_or_too_little():
+    m = ObstacleMemory(CFG)
+    m.add(np.array([[0.05, -0.29]]), (0, 0, 0), 0.0, 0.0)        # blind zone beside the body
+    assert m.clear_seen(_ground(1.0, 0.0), np.zeros((0, 2)), (0, 0, 0)) == 0
+    assert m.clear_seen(_ground(0.02, -0.25, n=1), np.zeros((0, 2)), (0, 0, 0)) == 0   # one stray point
+    assert m.query((0, 0, 0), 0.1, 0.0).shape[0] == 1
+
+
+def test_memory_clearing_uses_the_dog_pose():
+    m = ObstacleMemory(CFG)
+    m.add(np.array([[1.05, 0.05]]), (0, 0, 0), 0.0, 0.0)           # world (1.05, 0.05)
+    # dog moved to (1, 0) facing +y: the cell is now 0.05 m ahead, 0.05 m to the right
+    assert m.clear_seen(_ground(0.02, -0.03), np.zeros((0, 2)), (1.0, 0.0, math.pi / 2)) == 1

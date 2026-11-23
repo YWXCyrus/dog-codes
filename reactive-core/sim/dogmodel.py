@@ -131,7 +131,7 @@ class DogModel:
             if n.endswith('_2'):
                 pos.append(knee)
             elif n.endswith('_1'):
-                pos.append(1.15)
+                pos.append(0.64 if self.posture == 'standing' else 1.15)   # real standing hip Y (run 113959): legs 0.327 m
             else:
                 pos.append(0.0)
             vel.append(0.5 if moving else 0.0)

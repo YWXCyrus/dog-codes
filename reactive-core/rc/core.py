@@ -46,7 +46,9 @@ class Core:
         self.grid = Grid(cfg['cell_m'])
         self.guard = Guard(cfg, sensor_x=float(self.mount.xyz[0]))
         self.driver = Driver(cfg, self.grid)
-        self.floor_z = -cfg['body_h_default']      # fixed (no calibration)
+        self.floor_z = -cfg['body_h_default']      # until the legs give a height (floor_src: legs)
+        self.floor_src = 'default'
+        self.joints_t = None
         self.yaw_g = None
         self.arrival = {k: None for k in FEEDS}
         self.scan = Scan(floor_z=self.floor_z)
@@ -89,6 +91,15 @@ class Core:
         self.joints = (list(names), list(pos), list(vel))
         self.posture = P.classify(names, pos, self.c)
         self.settled = self.settle.update(list(vel), t)
+        if self.c['floor_src'] == 'legs':
+            h = P.leg_height(names, pos, self.c)
+            if h is not None:                      # lying / sitting / missing joints: keep the last value
+                if self.floor_src != 'legs':
+                    self.floor_z, self.floor_src = -h, 'legs'
+                else:                              # low-pass ~0.5 s: trotting swing legs, body wobble
+                    dt = 0.0 if self.joints_t is None else max(0.0, min(t - self.joints_t, 0.5))
+                    self.floor_z += (1.0 - math.exp(-dt / 0.5)) * (-h - self.floor_z)
+        self.joints_t = t
         self.arrival['joints'] = t
 
     def on_odom(self, x, y, yaw, t):
@@ -112,7 +123,10 @@ class Core:
         self.scan = self.det.update(p, self.floor_z, t, stairs_mode=stairs_mode)
         pose = self.odom.pose
         if pose is not None and self.odom_ok:
-            self.mem.add(self.scan.obs, pose, t, self.odom.travelled)
+            self.mem.clear_seen(self.scan.ground_now, self.scan.high_now, pose)
+            # memory only while running, and not while tilted (mis-levelled scans make ghost cells)
+            if self.started and self.att.tilt_deg() <= self.c['mem_tilt_max_deg']:
+                self.mem.add(self.scan.obs, pose, t, self.odom.travelled)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
 
     # ---------------------------------------------------------------- helpers
@@ -133,10 +147,7 @@ class Core:
         return self.mem.query(self.odom.pose, t, self.odom.travelled)
 
     def guard_input(self, t):
-        return GuardInput(obs_now=self.scan.obs_now, mem=self._mem_body(t), mem_ok=self.odom_ok,
-                          ages=self.ages(t), tilt_deg=self.att.tilt_deg(), stairs=self.driver.stairs_mode,
-                          roll_deg=math.degrees(self.att.roll), pitch_deg=math.degrees(self.att.pitch),
-                          t=t)
+        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t)
 
     def filter(self, cmd, t):
         """Guard a command (used for start-up and gait tests too)."""
@@ -149,6 +160,7 @@ class Core:
     def start(self, t):
         pose = self.odom.pose or (0.0, 0.0, 0.0)
         self.start_pose = pose
+        self.mem.clear()                           # nothing from before go (stand-up, posture change)
         self.grid.set_origin(pose)
         self.grid.update(pose)
         self.started = True
@@ -178,16 +190,10 @@ class Core:
             self.last_drive_t = t
             mem = self._mem_body(t)
             lanes = L.evaluate(self.scan.obs, self.scan.drops, self.c, extra=mem)
-            gi = self.guard_input(t)
-            sp = self.guard._sweep_pts(gi)
-            lb = self.guard._sweep_hit(sp, 0.0, self.c['turn_wz'])
-            rb = self.guard._sweep_hit(sp, 0.0, -self.c['turn_wz'])
             di = DriverInput(t=t, lanes=lanes, obs=self.scan.obs, mem=mem,
                              pose=self.odom.pose or (0.0, 0.0, 0.0), odom_ok=self.odom_ok,
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
-                             blocked_both=lb and rb,
-                             left_blocked=lb, right_blocked=rb,
                              last_cmd=self.last_cmd, dist_from_start=self.dist_from_start(),
                              front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']))
             out = self.driver.step(di)
@@ -216,6 +222,7 @@ class Core:
             'mode': d.mode, 'phase': d.phase, 'hold': d.hold_reason,
             'cell': list(cell) if cell else None, 'dir': head,
             'front_m': round(front, 2), 'tilt': round(self.att.tilt_deg(), 1),
+            'floor_m': round(-self.floor_z, 3),
             'odom_ok': self.odom_ok, 'posture': self.posture,
             'ages': {k: (None if math.isinf(v) else round(v, 2)) for k, v in self.ages(t).items()},
             'stairs': self.stairs.kind, 'wall_side': 'left' if d.side > 0 else 'right',

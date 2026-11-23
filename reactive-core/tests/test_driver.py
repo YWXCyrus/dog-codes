@@ -42,7 +42,6 @@ class Loop:
         self.t = 0.0
         self.cmd = Cmd()
         self.codes, self.events, self.modes, self.cmds = [], [], [], []
-        self.blocked_both = False
 
     def step(self):
         obs = self.obs(self) if callable(self.obs) else self.obs
@@ -51,7 +50,7 @@ class Loop:
         pitch = self.pitch(self) if callable(self.pitch) else 0.0
         di = DriverInput(t=self.t, lanes=lanes, obs=obs, mem=E, pose=tuple(self.pose), odom_ok=True,
                          travelled=self.trav, stairs=self.stairs(self), gyro_z=self.cmd.wz * self.gain,
-                         tilt_deg=tilt, pitch_deg=pitch, blocked_both=self.blocked_both, last_cmd=self.cmd)
+                         tilt_deg=tilt, pitch_deg=pitch, last_cmd=self.cmd)
         out = self.d.step(di)
         self.cmd = out.cmd
         self.codes += [INV[c] for c in out.codes]
@@ -102,17 +101,41 @@ def test_right_side_prefers_right():
     assert out_l.cmd.wz > 0 and out_r.cmd.wz < 0
 
 
-def test_boxed_in_holds_and_resume():
+def test_boxed_in_turns_on_the_spot_then_holds_and_resume():
+    # no turn sweep: boxed in, the dog first turns on the spot looking for a lane (a full circle),
+    # only then HOLD blocked
     box = np.vstack([line(0.5, -0.5, 0.5, 0.5), line(-0.5, 0.5, 0.5, 0.5), line(-0.5, -0.5, 0.5, -0.5)])
     lp = Loop(cfg(), obs=box)
-    lp.blocked_both = True
-    out = lp.run(0.3)
-    assert out.mode == 'HOLD' and lp.d.hold_reason == 'blocked'
-    assert out.cmd.vx == 0 and out.cmd.wz == 0
-    lp.obs, lp.blocked_both = E, False
+    out = lp.run(1.0)
+    assert out.mode == 'BLOCKED' and out.cmd.vx == 0.0 and out.cmd.wz != 0.0
+    lp.run(2 * math.pi / cfg()['turn_wz'] + 1.0)
+    assert lp.d.mode == 'HOLD' and lp.d.hold_reason == 'blocked'
+    assert lp.cmd.vx == 0 and lp.cmd.wz == 0
+    lp.obs = E
     lp.d.resume(lp.t)
     out = lp.run(0.3)
     assert out.mode == 'CRUISE'
+
+
+def test_heading_error_over_head_err_turns_on_the_spot_small_one_steers_walking():
+    c = cfg()
+    lp = Loop(c)
+    lp.run(0.2)
+    lp.d.target_yaw, lp.d.target_t = math.radians(c['head_err_turn_deg'] + 10), lp.t
+    out = lp.step()
+    assert out.mode == 'TURN' and out.cmd.vx == 0.0 and out.cmd.wz > 0
+    lp2 = Loop(c)
+    lp2.run(0.2)
+    lp2.d.target_yaw, lp2.d.target_t = math.radians(c['head_err_turn_deg'] - 4), lp2.t
+    out = lp2.step()
+    assert out.mode == 'CRUISE' and out.cmd.vx == pytest.approx(c['cruise_vx'])
+    assert 0 < out.cmd.wz <= c['walk_wz_max'] + 1e-9
+
+
+def test_constant_cruise_speed_near_obstacles():
+    c = cfg()
+    out = Loop(c, obs=line(1.3, -0.2, 1.3, 0.2)).run(0.3)     # something 1.3 m ahead, lane still free
+    assert out.cmd.vx == pytest.approx(c['cruise_vx']) or out.mode != 'CRUISE'
 
 
 def test_full_circle_without_free_lane_holds():

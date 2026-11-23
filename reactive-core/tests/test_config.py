@@ -39,8 +39,8 @@ def test_diff():
 
 
 def test_number_typo_rejected():
-    # real case 2026-11-22: 'exit' typed onto the command line -> sweep_margin_m='0.05exit'
-    for bad in ('sweep_margin_m=0.05exit', 'mem_time_s=1eexit', 'cruise_vx=fast', 'stop_m=true'):
+    # real case 2026-11-22: 'exit' typed onto the command line (sweep_margin_m='0.05exit')
+    for bad in ('stop_m=0.05exit', 'mem_time_s=1eexit', 'cruise_vx=fast', 'stop_m=true'):
         with pytest.raises(ValueError):
             config.load(overrides=[bad])
 

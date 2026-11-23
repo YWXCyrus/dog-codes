@@ -32,9 +32,6 @@ class DriverInput:
     gyro_z: float = 0.0
     tilt_deg: float = 0.0
     pitch_deg: float = 0.0              # + = nose down (ROS)
-    blocked_both: bool = False
-    left_blocked: bool = False          # guard sweep says a left turn is blocked
-    right_blocked: bool = False
     last_cmd: Cmd = field(default_factory=Cmd)   # previous GUARDED command (what the dog was sent)
     dist_from_start: float = 0.0
     front_dist: float = math.inf        # free distance straight ahead (raw scan), for the odometry cross-check
@@ -160,14 +157,6 @@ class Driver:
                 return unvisited[0]
         return order[0]
 
-    def _turn_dir_free(self, di, t):
-        """Committed turn direction, flipped if the guard's sweep blocks it and the other is free."""
-        if self.turn_dir > 0 and di.left_blocked and not di.right_blocked:
-            self.turn_dir, self.turn_t = -1, t
-        elif self.turn_dir < 0 and di.right_blocked and not di.left_blocked:
-            self.turn_dir, self.turn_t = 1, t
-        return self.turn_dir
-
     def _progress(self, di):
         """True if the dog was sent forward for progress_s but moved < progress_ratio of it."""
         c = self.c
@@ -274,9 +263,6 @@ class Driver:
         c = self.c
         t = di.t
         yaw = di.pose[2]
-        if di.blocked_both and not any(l.free for l in di.lanes):
-            self._hold(t, 'blocked')
-            return Cmd()
         # keep a committed target while it is still free
         lane = None
         if self.target_yaw is not None and t - self.target_t < c['commit_s']:
@@ -307,14 +293,14 @@ class Driver:
                     self.mode = TURN
                     self.turn_dir = 1 if err > 0 else -1
                     self.turn_t = t
-                return Cmd(0.0, self._turn_dir_free(di, t) * c['turn_wz'])
+                return Cmd(0.0, self.turn_dir * c['turn_wz'])
             self.mode = CRUISE
         if abs(err) > math.radians(c['head_err_turn_deg']):
             if self.mode != TURN or t - self.turn_t > c['commit_s']:
                 self.turn_dir = 1 if err > 0 else -1
                 self.turn_t = t
             self.mode = TURN
-            return Cmd(0.0, self._turn_dir_free(di, t) * c['turn_wz'])
+            return Cmd(0.0, self.turn_dir * c['turn_wz'])
         self.mode = CRUISE
         f0 = self._lane_near(di.lanes, 0.0).free_dist
         k = max(0.0, min(1.0, (f0 - 0.8) / 1.2))
@@ -379,7 +365,7 @@ class Driver:
             if dist <= c['stair_standoff_m']:
                 if abs(err) > math.radians(5.0):
                     return Cmd(0.0, math.copysign(0.25, err))
-                self._start_seq(t, Gt.ENTER_AI, 'ENTER', turn_sign=-1 if di.left_blocked else 1)
+                self._start_seq(t, Gt.ENTER_AI, 'ENTER')
                 return Cmd()
             if abs(err) > math.radians(5.0) and dist > c['stair_standoff_m'] + 0.3:
                 return Cmd(0.0, math.copysign(0.25, err))
@@ -430,14 +416,7 @@ class Driver:
             if t - s['t_climb'] > c['stair_max_s']:
                 self._hold(t, 'stairs_timeout', keep_stairs=True)
                 return Cmd()
-            if di.tilt_deg > c['tilt_stop_stairs_deg']:
-                # the guard already zeroes the command for that instant; HOLD only if it persists
-                s.setdefault('tilt_since', t)
-                if t - s['tilt_since'] > 1.0:
-                    self._hold(t, 'stairs_tilt', keep_stairs=True)
-                    return Cmd()
-            else:
-                s.pop('tilt_since', None)
+            # tilt: the guard stops and resumes by itself (no HOLD)
             # no progress on a step (only while the guard let us move)
             d_now = self._dist(di)
             if di.last_cmd.vx >= 0.05 and not self.odom_frozen:
@@ -481,7 +460,7 @@ class Driver:
                 if s['flat_d'] is None:
                     s['flat_d'] = d_now
                 if d_now - s['flat_d'] >= c['stair_flat_exit_m']:
-                    self._start_seq(t, Gt.EXIT_AI, 'EXIT', turn_sign=-1 if di.left_blocked else 1)
+                    self._start_seq(t, Gt.EXIT_AI, 'EXIT')
                     return Cmd()
             else:
                 s['flat_d'] = None

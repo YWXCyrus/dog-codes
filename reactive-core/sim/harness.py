@@ -50,12 +50,7 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
             pts = lidar.scan(world, dog.x, dog.y, dog.base_z(), dog.yaw, dog.roll, dog.pitch)
             core.on_cloud(pts, t)
         if not started:
-            gi = core.guard_input(t)
-            sp = core.guard._sweep_pts(gi)
-            lb = core.guard._sweep_hit(sp, 0.0, cfg['test_wz'])
-            rb = core.guard._sweep_hit(sp, 0.0, -cfg['test_wz'])
-            so = su.tick(t, core.feeds_ok(t), core.posture, core.settled, core.gyro[2],
-                         False, turn_sign=-1 if lb else 1, turn_blocked=lb and rb)
+            so = su.tick(t, core.feeds_ok(t))
             cmd, _ = core.filter(so.cmd, t)
             for c in so.codes:
                 dog.on_code(c, t)
