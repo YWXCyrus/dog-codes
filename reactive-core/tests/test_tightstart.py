@@ -28,7 +28,8 @@ def test_off_centre_start_walks_out():
         assert r.end_pose[0] > 1.0                  # out of the bay
 
 
-def test_off_centre_start_without_fallback_collides():
-    # documents what the fallback prevents (lane_w_min = lane_w disables it)
-    r = simulate(bay_world(0.15), config.load(overrides=['lane_w_min=0.70']), T=15.0)
-    assert r.collisions > 0                         # turns on the spot in the bay (no turn guard)
+def test_off_centre_start_old_lane_width_without_fallback():
+    # until bd6e0ed this collided (turning on the spot in the bay); with the short-term memory
+    # replaced by the FAST-LIO map (2026-11-23) the ghost cells are gone and it walks out too
+    r = simulate(bay_world(0.15), config.load(overrides=['lane_w=0.70', 'lane_w_min=0.70']), T=15.0)
+    assert r.collisions == 0 and r.end_pose[0] > 1.0
