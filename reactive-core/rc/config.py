@@ -60,3 +60,10 @@ def diff(cfg):
     """Parameters that differ from the defaults (printed at start, saved with the run)."""
     base = _read(DEFAULT_PATH)
     return {k: v for k, v in cfg.items() if base.get(k) != v}
+
+
+def mode(cfg, key):
+    """A switch value as text. YAML reads a bare `off` as False (the `stairs=off` bug of 2026-11-23):
+    treat False / None / 'off' as 'off' for the switches that use this helper (bar, curtain, nav_mode)."""
+    v = cfg[key]
+    return 'off' if v is False or v is None or str(v).lower() == 'off' else str(v)

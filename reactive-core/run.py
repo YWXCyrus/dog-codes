@@ -146,10 +146,11 @@ def stop_lio(p):
 def fmt_status(t0, st):
     cell = 'cell (%d,%d) %s' % (st['cell'][0], st['cell'][1], st['dir'] or '-') if st['cell'] else 'cell -'
     mode = st['mode'] + (' ' + st['phase'] if st['phase'] else '')
-    return '[%6.1fs] %-16s %-14s front %4.2f m  tilt %4.1f  floor %.2f  odom %s  lio %-3s  stairs %-6s  wall %s%s' % (
+    return '[%6.1fs] %-16s %-14s front %4.2f m  tilt %4.1f  floor %.2f  odom %s  lio %-3s  stairs %-6s  wall %s  plan %s  bar %s  curtain %s%s' % (
         time.monotonic() - t0, mode, cell, st['front_m'], st['tilt'], st['floor_m'], 'ok' if st['odom_ok'] else 'BAD',
         st['lio'],
-        st['stairs'], st['wall_side'], ('  guard ' + ','.join(st['guard'])) if st['guard'] else '')
+        st['stairs'], st['wall_side'], st['plan'], st['bar'], st['curtain'],
+        ('  guard ' + ','.join(st['guard'])) if st['guard'] else '')
 
 
 def main(argv=None):

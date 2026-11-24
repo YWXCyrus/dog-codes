@@ -30,6 +30,7 @@ class GuardInput:
     ages: dict = field(default_factory=dict)       # feed name -> seconds since last arrival
     tilt_deg: float = 0.0                          # max(|roll|, |pitch|)
     t: float = None
+    ignore_front_x: float = 0.0                    # curtain / bar crossing: front-stop ignores obstacles with body x below this
 
 
 class Guard:
@@ -40,13 +41,15 @@ class Guard:
         self.latched = False
         self.tilted = False          # stopped by tilt, waiting for tilt < tilt_resume_deg
 
-    def front_dist(self, obs):
-        """Distance from the sensor to the nearest obstacle ahead in the body corridor."""
+    def front_dist(self, obs, ignore_x=0.0):
+        """Distance from the sensor to the nearest obstacle ahead in the body corridor. `ignore_x` > 0
+        (crossing a curtain / bar, set by the driver for that one object): obstacles with body x below
+        it are not counted - everything beyond still stops the dog."""
         obs = np.asarray(obs, dtype=float).reshape(-1, 2)
         if obs.shape[0] == 0:
             return math.inf
         half = self.c['footprint_w'] / 2.0 + self.c['guard_corridor_margin_m']
-        m = (obs[:, 0] > self.sensor_x) & (np.abs(obs[:, 1]) < half)
+        m = (obs[:, 0] > max(self.sensor_x, ignore_x)) & (np.abs(obs[:, 1]) < half)
         return float(obs[m, 0].min() - self.sensor_x) if m.any() else math.inf
 
     def filter(self, cmd, gi):
@@ -73,7 +76,7 @@ class Guard:
         if vx < 0.0:
             vx = 0.0
             reasons.append('no_reverse')
-        if vx > 0.0 and self.front_dist(gi.obs_now) < c['stop_m']:
+        if vx > 0.0 and self.front_dist(gi.obs_now, gi.ignore_front_x) < c['stop_m']:
             vx = 0.0
             reasons.append('front_stop')
         if vx > 0.0 and wz != 0.0:

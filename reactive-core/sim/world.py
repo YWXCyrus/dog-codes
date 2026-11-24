@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 SOLID = ('wall', 'low_back', 'block')   # never climbed, never stood on
+PASS = ('curtain', 'bar')               # the dog goes through / over them: never blocks, never stood on (the lidar still sees them)
 
 
 @dataclass
@@ -65,7 +66,7 @@ class World:
         from `current` (<= current + max_step); the floor otherwise. Walls are never stood on."""
         best = 0.0
         for b in self.boxes:
-            if b.name in SOLID:
+            if b.name in SOLID or b.name in PASS:
                 continue
             if b.z1 <= current + max_step + 1e-9 and b.contains_xy(x, y):
                 best = max(best, b.z1)
@@ -75,6 +76,8 @@ class World:
         """Boxes that the footprint sample points (xs, ys) would hit at this support height."""
         hits = []
         for b in self.boxes:
+            if b.name in PASS:
+                continue
             step = 0.02 if b.name in SOLID else max_step
             if b.z1 > support + step + 1e-9 and b.z0 < support + body_top:
                 if np.any(b.contains_xy(xs, ys)):
@@ -118,4 +121,18 @@ def arena_default():
     w.wall(5.7, 2.5, 7.0, 2.5)
     # a free-standing block
     w.add(Box(5.0, 0.6, 0.6, 0.6, 0.0, 0.6, 0.0, 'block'))
+    return w
+
+
+def curtain_world(x=4.0, width=1.4, cloth=True, length=9.0):
+    """Corridor with a curtain across it at x (cloth=False: the same face but a solid wall)."""
+    w = corridor_world(length, width)
+    w.add(Box(x, 0.0, 0.05, width, 0.05, 1.5, 0.0, 'curtain' if cloth else 'wall'))
+    return w
+
+
+def bar_world(x=3.0, h=0.20, depth=0.15, width=1.4, length=9.0):
+    """Corridor with a low cylinder (a box of height h) across it at x."""
+    w = corridor_world(length, width)
+    w.add(Box(x, 0.0, depth, width, 0.0, h, 0.0, 'bar'))
     return w

@@ -28,8 +28,23 @@ class SimResult:
     trace: list = field(default_factory=list)      # every 0.5 s: t, x, y, yaw, vx, wz, support, pitch, mode, phase, stairs
 
 
+def fake_camera(world, dog, fov_deg=35.0, max_range=3.5):
+    """Detections a perfect camera model would give: every 'curtain' box ahead inside the field of view."""
+    dets = []
+    for b in world.boxes:
+        if b.name != 'curtain':
+            continue
+        dx, dy = b.cx - dog.x, b.cy - dog.y
+        r = math.hypot(dx, dy)
+        bearing = math.atan2(dy, dx) - dog.yaw
+        bearing = math.atan2(math.sin(bearing), math.cos(bearing))
+        if r < max_range and abs(math.degrees(bearing)) < fov_deg:
+            dets.append({'cls': 'curtain', 'conf': 0.9, 'bearing': bearing})
+    return dets
+
+
 def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0, dt=0.05,
-             resume_on_hold=False, verbose=False):
+             resume_on_hold=False, verbose=False, camera=True):
     dog = DogModel(world, *start, seed=seed, **(dog_kwargs or {}))
     lidar = Lidar(mount_xyz=cfg['mount_xyz'], mount_pitch_deg=cfg['mount_pitch_deg'], seed=seed)
     core = Core(cfg)
@@ -46,6 +61,8 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
         n, p, v = dog.joints()
         core.on_joints(n, p, v, t)
         core.on_odom(*dog.leg_odom(), t)
+        if camera and k % 4 == 0:                      # 5 Hz camera detections
+            core.on_vision(fake_camera(world, dog), t)
         if k % 2 == 0:
             pts = lidar.scan(world, dog.x, dog.y, dog.base_z(), dog.yaw, dog.roll, dog.pitch)
             core.on_cloud(pts, t)

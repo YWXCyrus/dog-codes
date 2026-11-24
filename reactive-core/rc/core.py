@@ -12,12 +12,17 @@ import numpy as np
 from rc import geometry as G
 from rc import lanes as L
 from rc import posture as P
+from rc import curtain as CU
 from rc.attitude import Attitude
+from rc.bar import BarDetector, BarResult
+from rc.config import mode as cfg_mode
+from rc.curtain import CurtainResult, Vision
 from rc.driver import Driver, DriverInput, HOLD
 from rc.grid import Grid
 from rc.guard import Cmd, Guard, GuardInput
 from rc.liomap import LioMap
 from rc.odom import LegOdom
+from rc.planner import PlanResult, Planner
 from rc.sensing import Mount, ObstacleDetector, Scan, filter_sensor, level_points
 from rc.stairs import StairDetector, StairsResult
 
@@ -55,6 +60,13 @@ class Core:
         self.arrival = {k: None for k in FEEDS}
         self.scan = Scan(floor_z=self.floor_z)
         self.stairs = StairsResult()
+        self.bar_det = BarDetector(cfg)
+        self.bar = BarResult()
+        self.vision = Vision(cfg)
+        self.curtain = CurtainResult()
+        self.planner = Planner(cfg)
+        self.plan = PlanResult(reason='off')
+        self._plan_goal = None
         self.gyro = (0.0, 0.0, 0.0)
         self.imu_t = None
         self.joints = ([], [], [])
@@ -118,6 +130,10 @@ class Core:
             self.map_extra = np.zeros((0, 2))
             self.pending_events.append({'t': round(t, 2), 'lio_bad': bad + ' - map off, live scan only'})
 
+    def on_vision(self, dets, t):
+        """Camera detections from rc/vision_node.py: [{'cls': 'curtain', 'conf': 0.9, 'bearing': 0.1}, ...]."""
+        self.vision.on_detections(dets, t)
+
     @property
     def odom_ok(self):
         return self.odom.ok and not self.driver.odom_frozen
@@ -140,6 +156,10 @@ class Core:
             self.map_extra = np.zeros((0, 2))
         self.lio.add(xs, t)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
+        if cfg_mode(self.c, 'bar') != 'off' and not self.driver.stairs_mode:
+            self.bar = self.bar_det.update(p, self.floor_z)
+        else:
+            self.bar = BarResult()
 
     # ---------------------------------------------------------------- helpers
     def ages(self, t):
@@ -158,7 +178,8 @@ class Core:
         return self.map_extra if self.lio.usable(t) else np.zeros((0, 2))
 
     def guard_input(self, t):
-        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t)
+        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t,
+                          ignore_front_x=self.driver.front_ignore_x)
 
     def filter(self, cmd, t):
         """Guard a command (used for start-up and gait tests too)."""
@@ -190,6 +211,7 @@ class Core:
         if ok != self.odom_was_ok:
             if not ok:
                 self.grid.clear()
+                self.planner.reset()
                 events.append({'t': round(t, 2), 'odom_inconsistent':
                                'frozen (lidar saw motion)' if self.driver.odom_frozen else self.odom.reason})
             else:
@@ -204,7 +226,26 @@ class Core:
                 # lane width before turning on the spot (no turn guard: turning there hits the walls)
                 lanes = L.evaluate(self.scan.obs, self.scan.drops, self.c, width=self.c['lane_w_min'],
                                    extra=mem)
-            di = DriverInput(t=t, lanes=lanes, obs=self.scan.obs, mem=mem,
+            pose = self.odom.pose or (0.0, 0.0, 0.0)
+            hint = None
+            if cfg_mode(self.c, 'nav_mode') == 'planner' and self.odom_ok and self.odom.pose is not None:
+                if self.driver.hint_failed:
+                    self.planner.mark_failed(t)
+                    self.driver.hint_failed = False
+                if self.driver.mode in ('CRUISE', 'TURN', 'BLOCKED'):
+                    self.planner.update(pose, self.scan.obs, self.scan.drops)
+                    self.plan = self.planner.plan(pose, t)
+                    hint = self.plan.yaw
+                    g = None if self.plan.goal is None else (round(self.plan.goal[0], 1), round(self.plan.goal[1], 1))
+                    if g != self._plan_goal:
+                        self._plan_goal = g
+                        self.pending_events.append({'t': round(t, 2), 'plan_goal': g,
+                                                    'yaw': None if hint is None else round(math.degrees(hint), 1),
+                                                    'reason': self.plan.reason})
+            self.curtain = (CU.analyse(self.vision, self.scan.obs_now, t, self.c)
+                            if cfg_mode(self.c, 'curtain') != 'off' else CurtainResult())
+            di = DriverInput(t=t, lanes=lanes, obs=self.scan.obs, mem=mem, hint_yaw=hint,
+                             bar=self.bar, curtain=self.curtain,
                              pose=self.odom.pose or (0.0, 0.0, 0.0), odom_ok=self.odom_ok,
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
@@ -240,6 +281,8 @@ class Core:
             'odom_ok': self.odom_ok, 'posture': self.posture, 'lio': self.lio.status(t),
             'ages': {k: (None if math.isinf(v) else round(v, 2)) for k, v in self.ages(t).items()},
             'stairs': self.stairs.kind, 'wall_side': 'left' if d.side > 0 else 'right',
+            'plan': self.plan.reason, 'bar': round(self.bar.dist, 2) if self.bar.found else None,
+            'curtain': round(self.curtain.dist, 2) if self.curtain.found else None,
             'guard': list(self.last_guard),
         }
 
