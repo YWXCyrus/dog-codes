@@ -354,6 +354,61 @@ def test_stairs_exit_despite_walking_wobble():
     assert 'exit_ai' in lp.codes and lp.d.stairs_done
 
 
+def no_down(st):
+    """The lidar never sees the way down (the real Mid-360 may miss the lower treads)."""
+    def f(loop):
+        r = st(loop)
+        return StairsResult() if r.kind == 'down' else r
+    return f
+
+
+def descend_events(lp):
+    return [e for e in lp.events if e.get('stairs') == 'DESCEND']
+
+
+def test_climb_switches_to_descend_on_nose_down_pitch_without_lidar_down():
+    st, tilt, pitch = stairs_world()
+    lp = Loop(cfg(), stairs=no_down(st), tilt=tilt, pitch=pitch)
+    lp.run(90.0)
+    ev = descend_events(lp)
+    assert len(ev) == 1 and ev[0]['by'] == 'imu'
+    assert 'exit_ai' in lp.codes and lp.d.stairs_done and lp.d.mode == 'CRUISE'
+    assert mixed(lp.cmds) == []
+
+
+def test_lidar_down_still_triggers_descend_first():
+    st, tilt, pitch = stairs_world()
+    lp = Loop(cfg(), stairs=st, tilt=tilt, pitch=pitch)
+    lp.run(80.0)
+    ev = descend_events(lp)
+    assert len(ev) == 1 and ev[0]['by'] == 'lidar'
+
+
+def test_nose_up_climb_never_switches_to_descend():
+    st, tilt, pitch = stairs_world()
+    lp = Loop(cfg(), stairs=no_down(st), tilt=tilt, pitch=lambda loop: min(0.0, pitch(loop)))
+    lp.run(40.0)
+    assert descend_events(lp) == []
+    assert 'exit_ai' not in lp.codes
+
+
+def test_walking_wobble_on_the_platform_does_not_switch_to_descend():
+    # 5-12 deg single-sample wobble (trial 2) must not fire the IMU switch before the real nose-down
+    edge = 2.0
+    st, tilt, pitch = stairs_world(edge)
+
+    def wobbly(loop):
+        return pitch(loop) + 7.0 * math.sin(loop.t * 7.3)
+    xs = []
+    lp = Loop(cfg(), stairs=no_down(st), tilt=lambda loop: abs(wobbly(loop)), pitch=wobbly)
+    while lp.t < 90.0:
+        lp.step()
+        if lp.d.phase == 'DESCEND' and not xs:
+            xs.append(lp.pose[0])
+    assert xs and xs[0] > edge + 1.6                        # only once the dog really pitched nose-down
+    assert 'exit_ai' in lp.codes and lp.d.stairs_done
+
+
 def test_descend_without_going_down_holds():
     # 'down' seen but the dog never pitches nose-down for 4 m: something is wrong -> HOLD
     st, tilt, pitch = stairs_world()

@@ -52,7 +52,9 @@ with the controller - start-up sends nothing to the dog.
 3. Stairs: confident stairs ahead -> APPROACH (square to the steps, 0.6 m short) -> ENTER
    (manual mode -> Enter AI -> AI Basic -> turn test) -> ALIGN -> CLIMB -> DESCEND -> EXIT (Exit AI ->
    Move Mode -> RUG general -> auto mode -> turn test) -> wall following continues. Unsure stairs:
-   stop 2 s, look again.
+   stop 2 s, look again. CLIMB -> DESCEND when the lidar sees a level below the platform
+   (`by=lidar` in the log) or, as a fallback, when the filtered pitch goes nose-down > 10 deg
+   (`by=imu`: the lidar never saw the way down).
    **In AI the dog ignores `/cmd_vel`**: the code drives it with axis commands on `/simple_cmd`
    (forward `0x21010130` + turn `0x21010135` every time, value in `size`, 20 Hz; axis value = dead
    zone + gain x speed, `ai_*` keys), and forward only works in **manual** control mode - so the
@@ -110,7 +112,7 @@ the run folder. The ones to tune on the course:
 | `stairs` | climb | `off` / `detect` (log only) / `climb` |
 | `stair_rise_min` / `stair_rise_max` / `stair_tread_min` | 0.08 / 0.20 / 0.15 | stair geometry limits |
 | `stair_vx_up` / `stair_vx_down` | 0.15 / 0.10 | stair speeds |
-| `tilt_stop_deg` / `tilt_resume_deg` / `tilt_latch_deg` | 35 / 30 / 60 | stop above, drive on by itself below resume (must stay above the ~27 deg stair slope), latch above |
+| `tilt_stop_deg` / `tilt_resume_deg` / `tilt_latch_deg` | 45 / 40 / 60 | stop above, drive on by itself below resume (must stay above the pitch of a dog standing on the stairs, real 27-31 / sim up to ~35 deg), latch above |
 | `run_time_s` | 0 (off) | HOLD after this many seconds |
 | `odom_topic` / `odom_type` | /leg_odom / pose | position source (`/leg_odom2` + `odometry` as alternative) |
 | `simple_cmd_qos` | transient_local | must match the `/simple_cmd` bridge (`lite3_domain_bridge_1`, TRANSIENT_LOCAL); with `volatile` every gait code was silently dropped (warning "incompatible QoS ... DURABILITY") |

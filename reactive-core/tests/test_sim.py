@@ -52,8 +52,8 @@ def stairs():
 
 def test_stairs_full_sequence(stairs):
     seq = names(stairs)                 # start-up sends nothing (feeds-only, commit 9ee2599)
-    assert seq[:2] == ['enter_ai', 'ai_basic']
-    assert seq[2:6] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general']
+    assert seq[:3] == ['manual', 'enter_ai', 'ai_basic']          # AI forward needs manual mode (7718a65)
+    assert seq[3:8] == ['exit_ai', 'move_mode', 'rug_general', 'rug_general', 'auto']
     assert stairs.collisions == 0 and not stairs.reversed
     assert stairs.max_support >= 0.44                     # was on the platform
     assert stairs.end_pose[0] > 6.0                        # crossed and continued in RUG general
@@ -93,6 +93,32 @@ def test_leg_odom_position_frozen_detected():
     assert r.collisions == 0 and not r.reversed
     assert any('odom_frozen' in e for e in r.events)
     assert max(math.hypot(x, y) for x, y in r.path) > 2.0
+
+
+def test_stairs_imu_fallback_when_lidar_never_sees_down(monkeypatch):
+    # the real Mid-360 may miss the lower treads from the platform: the IMU nose-down must take over
+    import rc.stairs as S
+    orig = S.classify
+
+    def no_down(lv, u, z, cfg):
+        r = orig(lv, u, z, cfg)
+        return {'kind': 'none', 'rises': 0, 'edge_x': math.inf} if r['kind'] == 'down' else r
+    monkeypatch.setattr(S, 'classify', no_down)
+    r = simulate(W.stairs_world(), CFG, T=110.0)
+    desc = [e for e in r.events if e.get('stairs') == 'DESCEND']
+    assert len(desc) == 1 and desc[0]['by'] == 'imu'
+    assert r.collisions == 0 and not r.reversed
+    assert any(e.get('stairs') == 'DONE' for e in r.events)
+    assert r.end_pose[0] > 6.0
+
+
+@pytest.mark.parametrize('rise', [0.15, 0.17, 0.18])
+def test_stairs_risers_never_jam_the_tilt_guard(rise):
+    w = W.corridor_world(12.0, 1.4)
+    w.stairs(3.0, 0.0, 3, rise, 0.30, 0.8, 3, 1.4)
+    r = simulate(w, CFG, T=130.0)
+    assert r.guard_counts.get('tilt_stop', 0) == 0
+    assert any(e.get('stairs') == 'DONE' for e in r.events)
 
 
 def test_stairs_with_frozen_leg_odom():

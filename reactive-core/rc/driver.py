@@ -478,14 +478,25 @@ class Driver:
                 return Cmd()
             wz = 0.0
             if self.phase == 'CLIMB':
-                if st.kind == 'down':
-                    h = yaw + st.heading
-                    s['fall'] = (x + st.edge_x * math.cos(h), y + st.edge_x * math.sin(h))
+                # fallback: the lidar may never see the way down from the platform (the real Mid-360
+                # gets only 1-2 rings per tread). The same ~1 s pitch filter as DESCEND: a sustained
+                # nose-down pitch means the dog is already going down -> DESCEND, went_down already set.
+                pc = s.get('pitch_c', di.pitch_deg)
+                pc += 0.1 * (di.pitch_deg - pc)
+                s['pitch_c'] = pc
+                by = 'lidar' if st.kind == 'down' else ('imu' if pc > 10.0 else None)
+                if by is not None:
+                    if by == 'lidar':
+                        h = yaw + st.heading
+                        s['fall'] = (x + st.edge_x * math.cos(h), y + st.edge_x * math.sin(h))
                     self.phase = 'DESCEND'
                     s['t_phase'] = t
                     s['flat_since'], s['flat_d'] = None, None
-                    s['pitch_f'] = di.pitch_deg
-                    self._ev(t, stairs='DESCEND', edge=round(st.edge_x, 2))
+                    s['pitch_f'] = pc if by == 'imu' else di.pitch_deg
+                    if by == 'imu':
+                        s['went_down'] = True
+                    self._ev(t, stairs='DESCEND', by=by,
+                             edge=round(st.edge_x, 2) if by == 'lidar' else None)
                 return Cmd(c['stair_vx_up'], wz)
             # DESCEND: exit when the IMU says we went down (nose-down pitch) and are level again,
             # nothing lower is seen ahead, and that for stair_flat_exit_m of travel. (The down-edge
