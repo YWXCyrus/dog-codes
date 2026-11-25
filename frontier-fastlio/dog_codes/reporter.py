@@ -2,7 +2,8 @@
 """reporter: submit task results to the competition scoring server (HTTP POST, JSON).
 
 Input : /quad/report (JSON from perception: task_id, task_type, scene_type, label, pos, message)
-Output: POST http://192.168.10.141:8001/task_report  (booklet v6.3 section E)
+Output: POST http://192.168.10.141:8001/task_report_A (left arena) or _B (right) - organisers 2026-11-25;
+        both are accepted during the competition (booklet v6.3 section E for the JSON)
 
 * one HTTP request per task result; only the LATEST valid submission per task_id counts, so a
   newer/better result simply replaces the old one;
@@ -68,7 +69,7 @@ class Reporter(Node):
     def __init__(self):
         super().__init__('reporter')
         p = C.declare(self, {
-            'url': 'http://192.168.10.141:8001/task_report',
+            'url': 'http://192.168.10.141:8001/task_report_A',     # _B = right arena (launch arg arena:=B)
             'group_id': 'group02_XXXX',
             'dry_run': False, 'timeout_s': 6.0, 'max_backoff_s': 10.0,
             'log_dir': os.path.join(HERE, 'run_logs'),

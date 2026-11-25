@@ -41,7 +41,9 @@ def generate_launch_description():
         DeclareLaunchArgument('scene_server', default_value='http://192.168.10.141:8000'),
         DeclareLaunchArgument('record', default_value='true'),
         DeclareLaunchArgument('record_heavy', default_value='false'),
-        DeclareLaunchArgument('report_url', default_value='http://192.168.10.141:8001/task_report'),
+        DeclareLaunchArgument('arena', default_value='A',
+                              description='A = left arena, B = right (organisers 2026-11-25: both accepted in the competition)'),
+        DeclareLaunchArgument('report_url', default_value=['http://192.168.10.141:8001/task_report_', LC('arena')]),
     ])
     for n in NODES:
         cmd = ['python3', '-u', os.path.join(HERE, n + '.py'), '--ros-args', '-r', '__node:=' + n,

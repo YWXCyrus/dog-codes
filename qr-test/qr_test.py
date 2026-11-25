@@ -29,7 +29,7 @@ MISSION = os.path.join(HERE, '..', 'frontier-fastlio', 'dog_codes')
 sys.path.insert(0, MISSION)
 import vision as V                                       # noqa: E402  (mission QR pipeline)
 
-DEFAULT_URL = 'http://192.168.10.141:8001/task_report'                  # = reporter.py default
+REPORT_BASE = 'http://192.168.10.141:8001/task_report_'   # + A (left arena) / B (right), organisers 2026-11-25
 
 
 def quiet_opencv():
@@ -188,6 +188,8 @@ def live(args):
     from sensor_msgs.msg import Image
     import common as C
 
+    if args.url is None:
+        args.url = REPORT_BASE + args.arena
     if args.post and ('XXXX' in args.group_id or not args.group_id):
         print('REFUSED: --post needs the registered --group-id (not the placeholder %r)' % args.group_id)
         return 2
@@ -300,7 +302,8 @@ def main(argv=None):
     lv.add_argument('--image-topic', default='/camera/color/image_raw')
     lv.add_argument('--hz', type=float, default=6.0, help='decode rate (mission: qr_hz 6)')
     lv.add_argument('--post', action='store_true', help='really POST each new decoded QR to --url')
-    lv.add_argument('--url', default=DEFAULT_URL)
+    lv.add_argument('--arena', default='A', choices='AB', help='A = left arena, B = right')
+    lv.add_argument('--url', default=None, help='overrides --arena')
     args = ap.parse_args(argv)
     quiet_opencv()
     return {'selftest': selftest, 'image': images, 'live': live}[args.cmd](args)

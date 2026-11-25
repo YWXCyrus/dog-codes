@@ -57,7 +57,7 @@ perception:
 
 reporter:
   ros__parameters:
-    url: http://192.168.10.141:8001/task_report
+    url: http://192.168.10.141:8001/task_report_A   # left arena; _B right (launch arg arena:=B sets it)
 
 supervisor:
   ros__parameters:

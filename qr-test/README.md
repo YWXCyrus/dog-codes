@@ -28,7 +28,8 @@ server, so do not post test codes on competition day.
 {"group_id": "<registered id>", "task_id": "M04", "task_type": "qr", "scene_type": "",
  "label": "", "pos": null, "message": "<decoded text, exactly>"}
 ```
-POST to `http://192.168.10.141:8001/task_report`. If the text names a room (one of the 8 scene types of booklet v6.3, or a
+POST to `http://192.168.10.141:8001/task_report_A` (left arena) or `_B` (right; `--arena B`) -
+organisers 2026-11-25, both accepted during the competition. If the text names a room (one of the 8 scene types of booklet v6.3, or a
 synonym: 'gym' -> fitness_centre) the mission also uses it as the M05 survivor room.
 **Check this format against the booklet** - it is taken from the existing reporter code.
 
