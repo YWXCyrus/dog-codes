@@ -135,11 +135,23 @@ def build_prompt(mission_text=''):
         "- relevant_to_mission: true if a survivor, hazard sign or mission supplies are clearly visible.\n"
         "- evidence: an array of at most three short strings naming what is visible, using these exact "
         "words where they apply: medical_equipment, hand_tools, food, water, utensils, survivor, high_voltage, "
-        "radioactive, chemical, biological, flammable.\n"
+        "radioactive, chemical, biological, flammable, stairs.\n"
         "- confidence: a number from 0.0 to 1.0 expressing your confidence that the scene_description is "
         "correct.\n\n"
         "Output valid JSON only. Do not include additional keys, Markdown, code fences, explanations, "
         "or text outside the JSON. Do not invent robot localisation coordinates.\n")
+
+
+STAIRS_PROMPT = (
+    "Analyze the attached image for this mission.\n\n"
+    "MISSION: Decide whether a staircase is directly ahead of the robot: steps going up (for example metal "
+    "checker-plate steps between handrails), as opposed to a wall, a box, a ramp or flat floor.\n\n"
+    "Return exactly one JSON object containing exactly these four keys:\n"
+    "\"scene_description\", \"relevant_to_mission\", \"evidence\", \"confidence\".\n"
+    "- scene_description: short description of what is ahead.\n"
+    "- relevant_to_mission: true ONLY if stairs are clearly visible ahead.\n"
+    "- evidence: array of at most three short strings.\n- confidence: number 0.0 to 1.0.\n"
+    "Output valid JSON only, no Markdown.\n")
 
 
 CURTAIN_PROMPT = (

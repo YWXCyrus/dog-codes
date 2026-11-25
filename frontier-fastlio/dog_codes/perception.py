@@ -33,6 +33,7 @@ from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import String
 
 import common as C
+import perception_cues as PC
 import scene_client as SC
 import vision as V
 
@@ -61,8 +62,18 @@ class Perception(Node):
             # standalone use without the frontier supervisor (e.g. next to reactive-core): no /quad/mode
             # arrives, so start in this mode ('EXPLORE' enables the scene queries); /quad/mode still wins
             'start_mode': 'IDLE', 'odom_topic': '/odom',
+            # camera model detections (reactive-core/rc/vision_node.py, best.pt: curtain/human/stairs)
+            'detections_topic': '/rc/detections', 'stairs_conf': 0.5, 'stairs_persist': 3,
+            'stairs_window_s': 1.5, 'stairs_event_gap_s': 1.0, 'human_conf': 0.5, 'human_persist': 3,
+            'human_query': True, 'status_hz': 1.0,
         })
         self.p = p
+        self.stairs_cue = PC.DetectionPersist('stairs', p['stairs_conf'], p['stairs_persist'], p['stairs_window_s'])
+        self.human_cue = PC.DetectionPersist('human', p['human_conf'], p['human_persist'], 1.5)
+        self.last_stairs_evt = 0.0
+        self.stairs_cells = set()
+        self.force_query = False          # a persistent 'human' detection: query the scene server now
+        self.qr_seen_t = -1e9
         self.qr_filter = C.QrPersist(p['qr_persist_n'], p['qr_persist_s'], p['qr_persist_px'],
                                      p['qr_w_min'], p['qr_w_max'], 2.0 * p['cx'])
         self.mission = self.load_mission(p['mission_file'])
@@ -116,6 +127,9 @@ class Perception(Node):
         self.create_subscription(PointCloud2, C.T_CLOUD, self.on_cloud, C.SENSOR_QOS)
         self.create_subscription(String, C.T_MODE, lambda m: setattr(self, 'mode', m.data), 10)
         self.create_subscription(String, '/quad/vlm_ask', self.on_ask, 10)
+        self.create_subscription(String, p['detections_topic'], self.on_detections, 10)
+        self.status_pub = self.create_publisher(String, '/quad/mission_status', 10)
+        self.create_timer(1.0 / max(0.1, p['status_hz']), self.publish_status)
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.drain_results)
         self.create_timer(1.0, self.scheduler)
@@ -282,6 +296,7 @@ class Perception(Node):
             if not self.qr_filter.update(time.monotonic(), w, c[0]):
                 return                      # implausible or a one-frame flicker: do not chase it
             self.qr_seen = {'w': w, 'cx': c[0], 't': time.monotonic()}
+            self.qr_seen_t = time.monotonic()
             # cy: reactive-core's QR approach stops getting closer when the code nears the picture top
             self.evt_pub.publish(C.jmsg({'type': 'qr_seen', 'w': round(w, 1), 'cx': round(c[0], 1),
                                          'cy': round(c[1], 1)}))
@@ -365,6 +380,20 @@ class Perception(Node):
     # ------------------------------------------------------------ VLM scheduling
     def on_ask(self, m):
         d = C.jload(m.data, {})
+        if d.get('kind') == 'stairs':
+            # the camera model answers at once if it saw stairs a moment ago; else the scene server
+            seen = self.stairs_cue.seen(time.monotonic())
+            if seen is not None:
+                self.ans_pub.publish(C.jmsg({'id': d.get('id'), 'kind': 'stairs', 'answer': True, 'src': 'yolo',
+                                             'bearing': seen['bearing'], 'conf': seen['conf'],
+                                             'text': 'camera model: stairs'}))
+            elif self.img is not None:
+                self.push_job({'kind': 'stairs', 'id': d.get('id'), 'img': self.img.copy(),
+                               'prompt': SC.STAIRS_PROMPT, 'pose': self.img_pose}, front=True)
+            else:
+                self.ans_pub.publish(C.jmsg({'id': d.get('id'), 'kind': 'stairs', 'answer': False,
+                                             'text': 'no image', 'failed': True}))
+            return
         if d.get('kind') == 'curtain' and self.img is not None:
             self.vlm_pending = d.get('id')
             self.push_job({'kind': 'curtain', 'id': d.get('id'), 'img': self.img.copy(),
@@ -384,6 +413,39 @@ class Perception(Node):
         except queue.Full:
             pass
 
+    # ------------------------------------------------------------ camera model + status
+    def on_detections(self, m):
+        """/rc/detections {'t', 'dets': [{'cls', 'conf', 'bearing', 'w'}]} from the camera model."""
+        d = C.jload(m.data, {}) or {}
+        t = time.monotonic()
+        dets = d.get('dets', [])
+        self.stairs_cue.update(dets, t)
+        self.human_cue.update(dets, t)
+        s = self.stairs_cue.seen(t)
+        if s is not None and t - self.last_stairs_evt >= self.p['stairs_event_gap_s']:
+            self.last_stairs_evt = t
+            self.note_stairs((self.px, self.py, self.yaw), 'yolo', s['conf'], s)
+        if self.p['human_query'] and self.human_cue.seen(t) is not None:
+            self.force_query = True
+
+    def note_stairs(self, pose, src, conf, det=None):
+        """Stairs seen: event for the navigation (square up / enter AI one cell before them)."""
+        ev = {'type': 'stairs_seen', 'src': src, 'conf': round(float(conf), 3),
+              'yaw': round(pose[2], 3), 'cell': list(C.cell_of(pose[0], pose[1]))}
+        if det is not None:
+            ev.update(bearing=det['bearing'], w=det['w'], n=det['n'])
+            self.stairs_cells.add(tuple(C.cell_of(pose[0] + 1.02 * math.cos(pose[2] + det['bearing']),
+                                                  pose[1] + 1.02 * math.sin(pose[2] + det['bearing']))))
+        self.evt_pub.publish(C.jmsg(ev))
+
+    def publish_status(self):
+        st = PC.mission_status(self.mission, self.best, qr_text=self.qr_text,
+                               qr_seen_recent=time.monotonic() - self.qr_seen_t < 5.0,
+                               m05_hint=self.m05_scene_hint, survivor_cells=sorted(self.survivors),
+                               scene_by_cell=self.scene_by_cell, stairs_cells=sorted(self.stairs_cells),
+                               t=time.monotonic())
+        self.status_pub.publish(C.jmsg(st))
+
     def scheduler(self):
         p = self.p
         if not p['scene_enabled'] or self.img is None or not self.have_odom:
@@ -399,8 +461,10 @@ class Perception(Node):
         cell = C.cell_of(vx_, vy_)
         gap = t - self.last_query_t
         new_cell = cell != self.last_query_cell
-        if not ((new_cell and gap > p['scene_min_gap_s']) or gap > p['scene_stationary_gap_s']):
+        urgent = self.force_query and gap > 1.0      # the camera model saw a person: a survivor room
+        if not (urgent or (new_cell and gap > p['scene_min_gap_s']) or gap > p['scene_stationary_gap_s']):
             return
+        self.force_query = False
         img = self.img
         if cv2.Laplacian(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var() < p['blur_min']:
             return
@@ -439,11 +503,18 @@ class Perception(Node):
                 self.fail_n += 1
                 self.get_logger().warn('scene query failed (%s): %s' % (job['kind'], info),
                                        throttle_duration_sec=5.0)
-                if job['kind'] == 'curtain':
-                    self.ans_pub.publish(C.jmsg({'id': job['id'], 'answer': False,
+                if job['kind'] in ('curtain', 'stairs'):
+                    self.ans_pub.publish(C.jmsg({'id': job['id'], 'kind': job['kind'], 'answer': False,
                                                  'text': 'query failed: ' + info, 'failed': True}))
                 continue
             self.fail_n = 0
+            if job['kind'] == 'stairs':
+                yes = bool(res['relevant']) or PC.stairs_in_result(res)
+                if yes:
+                    self.note_stairs(job['pose'], 'vlm', res['conf'])
+                self.ans_pub.publish(C.jmsg({'id': job['id'], 'kind': 'stairs', 'answer': yes, 'src': 'vlm',
+                                             'text': (res['desc'] + ' ' + ' '.join(map(str, res['evidence'])))[:120]}))
+                continue
             if job['kind'] == 'curtain':
                 txt = (res['desc'] + ' ' + ' '.join(map(str, res['evidence']))).lower()
                 yes = res['relevant'] or any(w in txt for w in ('curtain', 'cloth', 'fabric', 'drape'))
@@ -464,6 +535,8 @@ class Perception(Node):
             d[r['scene']] = d.get(r['scene'], 0.0) + r['conf']
             self.scene_hist.append((time.monotonic(), r['scene'], r['conf']))
             self.refresh_scene_for_cell(cell)
+        if PC.stairs_in_result(r):
+            self.note_stairs(pose, 'vlm', r['conf'])
         scene = self.scene_now(cell)
         pos = C.snap_to_cell_centre(*job['view'])
         # --- objects (M01)
