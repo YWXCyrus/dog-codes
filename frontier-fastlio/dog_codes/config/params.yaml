@@ -52,7 +52,7 @@ perception:
   ros__parameters:
     image_topic: /camera/color/image_raw
     scene_server: http://192.168.10.141:8000
-    scene_group_short: true        # send "group02" (as the TA stress test did) instead of group02_XXXX
+    scene_group_short: false       # booklet v6.3 E: the SAME full id (group##_XXXX) for the scene server and the scoring server
     pos_mode: view                 # cell the camera looks at (~1 m ahead / through a door); 'robot' = own cell
 
 reporter:

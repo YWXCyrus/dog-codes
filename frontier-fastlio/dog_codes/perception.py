@@ -50,7 +50,7 @@ class Perception(Node):
             'scene_server': 'http://192.168.10.141:8000',
             'scene_path': '/analyze', 'scene_image_field': 'image',
             'scene_prompt_field': 'prompt', 'scene_group_field': 'group_id',
-            'scene_group_short': True,      # send "group02" (as the stress test did) not full id
+            'scene_group_short': False,     # booklet v6.3 E: same full id (group##_XXXX) on both servers
             'scene_enabled': True, 'scene_min_gap_s': 2.0, 'scene_stationary_gap_s': 9.0,
             'scene_max_speed': 0.4, 'blur_min': 25.0, 'jpeg_quality': 85,
             'scene_conf_min': 0.35, 'survivor_conf_min': 0.5,
@@ -58,6 +58,9 @@ class Perception(Node):
             'hz_votes': 3, 'pos_mode': 'view', 'view_max_m': 1.0, 'hazard_pos_inset_m': 0.25,
             'qr_assist_max_s': 15.0, 'qr_assist_w_px': 140.0, 'qr_assist_speed': 0.07,
             'qr_persist_n': 3, 'qr_persist_s': 1.0, 'qr_persist_px': 50.0, 'qr_w_min': 20.0, 'qr_w_max': 700.0,
+            # standalone use without the frontier supervisor (e.g. next to reactive-core): no /quad/mode
+            # arrives, so start in this mode ('EXPLORE' enables the scene queries); /quad/mode still wins
+            'start_mode': 'IDLE', 'odom_topic': '/odom',
         })
         self.p = p
         self.qr_filter = C.QrPersist(p['qr_persist_n'], p['qr_persist_s'], p['qr_persist_px'],
@@ -67,7 +70,7 @@ class Perception(Node):
         self.speed = 0.0
         self.wz = 0.0
         self.have_odom = False
-        self.mode = 'IDLE'
+        self.mode = p['start_mode']
         self.img = None
         self.img_t = 0.0
         self.img_pose = (0, 0, 0)
@@ -109,14 +112,18 @@ class Perception(Node):
         self.ans_pub = self.create_publisher(String, '/quad/vlm_answer', 10)
         self.dbg_pub = self.create_publisher(String, '/quad/scene_state', 10)
         self.create_subscription(Image, p['image_topic'], self.on_image, C.SENSOR_QOS)
-        self.create_subscription(Odometry, '/odom', self.on_odom, C.SENSOR_QOS)
+        self.create_subscription(Odometry, p['odom_topic'], self.on_odom, C.SENSOR_QOS)
         self.create_subscription(PointCloud2, C.T_CLOUD, self.on_cloud, C.SENSOR_QOS)
         self.create_subscription(String, C.T_MODE, lambda m: setattr(self, 'mode', m.data), 10)
         self.create_subscription(String, '/quad/vlm_ask', self.on_ask, 10)
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.drain_results)
         self.create_timer(1.0, self.scheduler)
-        self.get_logger().info('perception up: group=%s tasks=%s' % (grp, list(self.mission)))
+        if 'XXXX' in p['group_id']:
+            self.get_logger().error('group_id %s is a PLACEHOLDER - launch with group_id:=<registered '
+                                    'group##_XXXX> (scene server AND scoring server)' % p['group_id'])
+        self.get_logger().info('perception up: group=%s tasks=%s mode=%s odom=%s'
+                               % (grp, list(self.mission), self.mode, p['odom_topic']))
 
     # ------------------------------------------------------------ config
     def load_mission(self, path):
@@ -262,21 +269,22 @@ class Perception(Node):
             self.qr_text = text
             self.qr_seen = None
             self.qr_cell = C.cell_of(pose[0], pose[1])
-            low = text.lower().replace('_', ' ')
-            for s in C.SCENE_TYPES:
-                if s.replace('_', ' ') in low:
-                    self.m05_scene_hint = s
-                    break
+            hint = SC.scene_from_text(text)          # 'My friend is at the gym' -> fitness_centre
+            if hint:
+                self.m05_scene_hint = hint
             self.emit('M04', 'qr', scene=self.scene_now(C.cell_of(pose[0], pose[1])), message=text,
                       score=1.0, src='qr')
             self.evt_pub.publish(C.jmsg({'type': 'qr_decoded', 'text': text,
-                                         'hint': self.m05_scene_hint}))
+                                         'hint': self.m05_scene_hint,
+                                         'w': round(w, 1), 'cx': round(c[0], 1), 'cy': round(c[1], 1)}))
             self.assign_survivors()
         else:
             if not self.qr_filter.update(time.monotonic(), w, c[0]):
                 return                      # implausible or a one-frame flicker: do not chase it
             self.qr_seen = {'w': w, 'cx': c[0], 't': time.monotonic()}
-            self.evt_pub.publish(C.jmsg({'type': 'qr_seen', 'w': round(w, 1), 'cx': round(c[0], 1)}))
+            # cy: reactive-core's QR approach stops getting closer when the code nears the picture top
+            self.evt_pub.publish(C.jmsg({'type': 'qr_seen', 'w': round(w, 1), 'cx': round(c[0], 1),
+                                         'cy': round(c[1], 1)}))
 
     def qr_assist(self):
         if self.mode != 'QR_APPROACH':

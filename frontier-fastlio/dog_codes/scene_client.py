@@ -16,15 +16,26 @@ import urllib.error
 import urllib.request
 import uuid
 
+# booklet v6.3: 8 scene types. Order matters - the first exact name in the description wins, so the
+# specific shops come before 'market', whose generic 'shop' / 'store' synonyms were dropped
 SCENE_SYNONYMS = {
+    'clothes_shop': ['clothes shop', 'clothing', 'clothes', 'apparel', 'boutique', 'garment', 'fashion',
+                     'clothes rack', 'hanger', 'dresses', 'shirts', 'fitting room'],
+    'fitness_centre': ['fitness centre', 'fitness center', 'fitness', 'gym', 'treadmill', 'dumbbell', 'barbell',
+                       'kettlebell', 'exercise', 'workout', 'weights', 'yoga mat', 'exercise bike'],
+    'furniture_shop': ['furniture shop', 'furniture store', 'furniture', 'sofa', 'couch', 'armchair',
+                       'wardrobe', 'dining table', 'bookshelf', 'dresser', 'bed frame'],
     'kitchen': ['kitchen', 'stove', 'oven', 'sink', 'cooking', 'microwave', 'cooker'],
-    'market': ['market', 'shop', 'store', 'grocery', 'stall', 'supermarket', 'vendor', 'shelves of goods'],
+    'market': ['market', 'grocery', 'stall', 'supermarket', 'vendor', 'shelves of goods', 'checkout',
+               'cashier', 'produce stand'],
     'workshop': ['workshop', 'workbench', 'garage', 'tool shed', 'tools', 'hardware'],
     'clinic': ['clinic', 'medical', 'hospital', 'first aid', 'first-aid', 'pharmacy', 'doctor', 'nurse', 'patient', 'treatment room'],
     'cleaning_room': ['cleaning', 'janitor', 'mop', 'broom', 'laundry', 'detergent', 'bucket', 'custodial'],
 }
 OBJECT_SYNONYMS = {
-    'medical_kit': ['medical kit', 'first aid', 'first-aid', 'medical supplies', 'medicine', 'bandage', 'medical_kit', 'med kit'],
+    'medical_equipment': ['medical equipment', 'medical_equipment', 'medical kit', 'first aid', 'first-aid',
+                          'medical supplies', 'medicine', 'bandage', 'med kit', 'stethoscope', 'syringe',
+                          'wheelchair', 'defibrillator', 'iv drip', 'blood pressure'],
     'hand_tools': ['hand tool', 'hand_tools', 'hammer', 'wrench', 'screwdriver', 'pliers', 'saw', 'toolbox', 'tools'],
     'food': ['food', 'fruit', 'vegetable', 'bread', 'snack', 'groceries', 'canned', 'meal', 'produce'],
     'water': ['water', 'water bottle', 'bottled water', 'jug', 'drinking water'],
@@ -37,8 +48,24 @@ HAZARD_SYNONYMS = {
     'biological': ['biohazard', 'biological', 'bio hazard', 'bio-hazard'],
     'flammable': ['flammable', 'flame', 'fire hazard', 'inflammable'],
 }
-SURVIVOR_WORDS = ['survivor', 'person', 'human', 'people', 'mannequin', 'doll', 'victim',
+# no 'mannequin': a clothes_shop (booklet v6.3) is full of them; survivors are pictures of people / dolls
+SURVIVOR_WORDS = ['survivor', 'person', 'human', 'people', 'doll', 'victim',
                   'figure', 'man ', 'woman', 'child', 'injured']
+
+
+def scene_from_text(text):
+    """Scene type named in free text (QR message: 'My friend is at the gym' -> fitness_centre):
+    an exact name first (spaces or underscores, 'center' too), else the most synonym hits; '' if none."""
+    low = ' ' + str(text).lower().replace('_', ' ').replace('center', 'centre') + ' '
+    for k in SCENE_SYNONYMS:
+        if k.replace('_', ' ') in low:
+            return k
+    best, n_best = '', 0
+    for k, ws in SCENE_SYNONYMS.items():
+        n = _count(low, ws)
+        if n > n_best:
+            best, n_best = k, n
+    return best
 
 
 def _count(text, words):
@@ -96,16 +123,18 @@ def build_prompt(mission_text=''):
         "rooms, equipment, supplies etc. Interpret these props according to the real-world objects or "
         "locations they clearly represent. Do not mark a scene irrelevant merely because the objects are "
         "toys, miniature, or nonfunctional props.\n\n"
-        "MISSION: Identify the room type visible, supplies/objects, any survivor (person, doll or "
-        "mannequin) and any hazard warning sign. " + mission_text + "\n\n"
+        "MISSION: Identify the room type visible, supplies/objects, any survivor (a person, a printed "
+        "picture of a person, or a doll - a shop mannequin or clothes dummy is NOT a survivor) and any "
+        "hazard warning sign. " + mission_text + "\n\n"
         "Return exactly one JSON object containing exactly these four keys:\n"
         "\"scene_description\", \"relevant_to_mission\", \"evidence\", \"confidence\".\n\n"
         "Definitions:\n"
         "- scene_description: the room type, using one of: kitchen, market, workshop, clinic, "
-        "cleaning_room (or \"unknown\" / \"corridor\"), followed by a few words.\n"
+        "cleaning_room, clothes_shop, fitness_centre, furniture_shop (or \"unknown\" / \"corridor\"), "
+        "followed by a few words.\n"
         "- relevant_to_mission: true if a survivor, hazard sign or mission supplies are clearly visible.\n"
         "- evidence: an array of at most three short strings naming what is visible, using these exact "
-        "words where they apply: medical_kit, hand_tools, food, water, utensils, survivor, high_voltage, "
+        "words where they apply: medical_equipment, hand_tools, food, water, utensils, survivor, high_voltage, "
         "radioactive, chemical, biological, flammable.\n"
         "- confidence: a number from 0.0 to 1.0 expressing your confidence that the scene_description is "
         "correct.\n\n"

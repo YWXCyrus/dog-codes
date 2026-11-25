@@ -18,9 +18,11 @@ from std_msgs.msg import String
 
 CELL = 1.02
 
-# ---- fixed vocabularies from the booklet (v5.1) ----------------------------------------
-SCENE_TYPES = ['kitchen', 'market', 'workshop', 'clinic', 'cleaning_room']
-OBJECT_LABELS = ['medical_kit', 'hand_tools', 'food', 'water', 'utensils']
+# ---- fixed vocabularies from the booklet (v6.3) ----------------------------------------
+# booklet v6.3 section E (fixed vocabulary; a value outside these lists makes the submission invalid)
+SCENE_TYPES = ['clothes_shop', 'fitness_centre', 'kitchen', 'market', 'workshop', 'clinic', 'cleaning_room',
+               'furniture_shop']
+OBJECT_LABELS = ['medical_equipment', 'hand_tools', 'food', 'water', 'utensils']
 HAZARD_LABELS = ['high_voltage', 'radioactive', 'chemical', 'biological', 'flammable']
 TASK_TYPES = ['object', 'hazard', 'survivor', 'qr']
 
