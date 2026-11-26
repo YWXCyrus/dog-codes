@@ -179,7 +179,7 @@ the run folder. The ones to tune on the course:
 | `stairs` | climb | `off` / `detect` (log only) / `climb` |
 | `stair_rise_min` / `stair_rise_max` / `stair_tread_min` | 0.08 / 0.20 / 0.15 | stair geometry limits |
 | `stair_vx_up` / `stair_vx_down` | 0.15 / 0.10 | stair speeds |
-| `tilt_stop_deg` / `tilt_resume_deg` / `tilt_latch_deg` | 45 / 40 / 60 | stop above, drive on by itself below resume (must stay above the pitch of a dog standing on the stairs, real 27-31 / sim up to ~35 deg), latch above |
+| `tilt_stop_deg` / `tilt_resume_deg` / `tilt_latch_deg` | 65 / 60 / 80 | stop above, drive on by itself below resume (must stay above the pitch of a dog standing on the stairs, real 27-31 / sim up to ~35 deg), latch above |
 | `run_time_s` | 0 (off) | HOLD after this many seconds |
 | `odom_topic` / `odom_type` | /leg_odom / pose | position source (`/leg_odom2` + `odometry` as alternative) |
 | `simple_cmd_qos` | transient_local | must match the `/simple_cmd` bridge (`lite3_domain_bridge_1`, TRANSIENT_LOCAL); with `volatile` every gait code was silently dropped (warning "incompatible QoS ... DURABILITY") |

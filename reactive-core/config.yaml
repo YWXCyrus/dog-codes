@@ -74,10 +74,11 @@ stop_m: 0.24                         # from the sensor: nose ~0.14 m ahead of it
 guard_corridor_margin_m: 0.05
 footprint_w: 0.42                    # front-stop corridor width (+ margin)
 stale_s: 0.30
-tilt_stop_deg: 45                    # above: zero command (flat and stairs) ... (35 was too close: sim descent peaks 32-35 deg)
-tilt_resume_deg: 40                  # ... until below this, then it drives on by itself. Must stay above the pitch of a dog
+tilt_stop_deg: 65                    # above: zero command (flat and stairs) ... (35 was too close: sim descent peaks 32-35 deg;
+                                     # 45 -> 65 on 2026-11-27, user: run 170602 the filtered tilt read 49-61 deg in a ramp stumble)
+tilt_resume_deg: 60                  # ... until below this, then it drives on by itself. Must stay above the pitch of a dog
                                      # standing on the stairs (real 27-31, sim up to ~35 deg), or it never resumes there
-tilt_latch_deg: 60                   # above: the dog is going over - stopped until restart
+tilt_latch_deg: 80                   # above: the dog is going over - stopped until restart (60 -> 80 on 2026-11-27)
 
 # ---- grid (spec section 8) ----
 cell_m: 1.0
