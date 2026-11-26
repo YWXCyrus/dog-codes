@@ -246,7 +246,7 @@ def test_sim_wall_taken_for_a_curtain_is_caught_by_the_touch_test(monkeypatch):
 
 @pytest.mark.parametrize('h', [0.20, 0.30])
 def test_sim_bar_is_crossed(h):
-    r = simulate(W.bar_world(3.0, h=h), CFG, T=60.0)
+    r = simulate(W.bar_world(3.0, h=h), config.load(overrides=['bar=cross']), T=60.0)   # off by default since 2026-11-26
     assert evs(r, 'bar')[:3] == ['SQUARE', 'CROSS', 'DONE']
     assert r.end_pose[0] > 4.0 and r.collisions == 0 and not r.reversed
     assert r.final_mode != 'HOLD'

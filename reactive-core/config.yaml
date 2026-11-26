@@ -184,7 +184,7 @@ plan_external_s: 1.5                 # an external (Nav2) path older than this i
 plan_max_dev_deg: 50                 # a free lane further than this from the hint is not used for it
 
 # ---- low bar / cylinder (rc/bar.py; the driver crosses it square and slowly) ----
-bar: cross                           # off | detect | cross
+bar: "off"                           # off | detect | cross - quoted: bare off is YAML false  (off 2026-11-26: the organisers removed the white cylinder)
 bar_h_min: 0.10
 bar_h_max: 0.32
 bar_depth_max: 0.35                  # deeper (the 0.5 m slab of run 181509) is not a bar
