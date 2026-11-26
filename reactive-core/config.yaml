@@ -187,6 +187,8 @@ grid_obst_stop_m: 0.45               # an obstacle inside a cell: creep up to th
 grid_realign_s: 0.8                  # a blocked border: square up to the axis, stand this long (snap), look again
 grid_back_max_m: 0.80               # then back straight to the previous centre (over the ground just walked); 0 = off
 grid_back_vx: 0.12                   # (0.08 did not move the real dog, live 2026-11-26)
+body_x_m: 0.35                       # grid lanes ignore points inside the dog's outline (+-this along x from base_link) ...
+body_y_m: 0.24                       # ... and +-this across (its own legs)
 grid_back_give_up_s: 2.5             # not moving backwards after this: give up backing, plan on
 cur_detour: 3.0                      # a detected curtain is crossed once if its near side costs at most this (or nothing else is left); <0 = never
 cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)

@@ -271,6 +271,19 @@ class Core:
         self.answers.append(ans)
         self.pending_events.append({'t': round(t, 2), 'vlm_answer': ans})
 
+    def _off_body(self, pts):
+        """Drop points inside the dog's own outline: standing still, the lidar sees its own front legs
+        (live 2026-11-26: lane 'blocked' 0.05 m ahead of base_link, the guard's front said 3 m free)."""
+        pts = np.asarray(pts, dtype=float).reshape(-1, 2)
+        if pts.shape[0] == 0:
+            return pts
+        inside = (np.abs(pts[:, 0]) <= self.c['body_x_m']) & (np.abs(pts[:, 1]) <= self.c['body_y_m'])
+        return pts[~inside]
+
+    def _nav_pts(self, t):
+        mem = self._mem_body(t) if self.c['grid_use_lio_map'] else np.zeros((0, 2))
+        return self._off_body(np.vstack([self.scan.obs, self.scan.drops, np.asarray(mem).reshape(-1, 2)]))
+
     def _stairs_cue(self, t):
         """Stairs straight ahead (body bearing, rad) from the camera model or the lidar stairs detector, or None."""
         sd = self.cam['stairs'].seen(t)
@@ -401,7 +414,7 @@ class Core:
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
                              last_cmd=self.last_cmd, dist_from_start=self.dist_from_start(),
                              front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
-                             apose=ap, nav_pts=np.vstack([self.scan.obs, self.scan.drops, mem.reshape(-1, 2)]),
+                             apose=ap, nav_pts=self._nav_pts(t),
                              elapsed=t - (self.t_go if self.t_go is not None else t), mission=self.mission,
                              curtain_det=self.cam['curtain'].seen(t), answers=self.answers,
                              stairs_cue=self._stairs_cue(t),
@@ -448,9 +461,9 @@ class Core:
             'visited': len(self.amap.order), 'bounds': self.amap.bounds_known(),
             'cpu': {k: round(v) for k, v in self.cpu.items()},
             # free distance straight ahead (lane_w wide) per source: live obstacles / drops / FAST-LIO map
-            'ahead': [round(L.free_distance(self.scan.obs, 0.0, self.c['lane_w']), 2),
-                      round(L.free_distance(self.scan.drops, 0.0, self.c['lane_w']), 2),
-                      round(L.free_distance(self._mem_body(t), 0.0, self.c['lane_w']), 2)],
+            'ahead': [round(L.free_distance(self._off_body(self.scan.obs), 0.0, self.c['lane_w']), 2),
+                      round(L.free_distance(self._off_body(self.scan.drops), 0.0, self.c['lane_w']), 2),
+                      round(L.free_distance(self._off_body(self._mem_body(t)), 0.0, self.c['lane_w']), 2)],
         }
 
     def _acell(self, t):

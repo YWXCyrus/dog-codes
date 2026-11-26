@@ -85,6 +85,7 @@ class CellNav:
         self.stairs_crossings = 0
         self.stairs_asked = set()
         self.realigned = {}
+        self.back_ok = True
 
     # ------------------------------------------------------------------ helpers
     def _ev(self, t, **kw):
@@ -467,7 +468,7 @@ class CellNav:
         from (over the ground it just walked) - turning there would sweep the body into the obstacle /
         the door posts. Only when that centre is straight behind; grid_back_max_m at most."""
         c, m = self.c, self.m
-        if c['grid_back_max_m'] <= 0:
+        if c['grid_back_max_m'] <= 0 or not self.back_ok:
             return
         x, y, yaw = ni.apose
         came = self.came_from.get(cur)
@@ -493,7 +494,8 @@ class CellNav:
         stuck = ni.t - s['t0'] > c['grid_back_give_up_s'] and moved < 0.03   # live 2026-11-26: the dog did not reverse
         if along <= 0.05 or moved >= c['grid_back_max_m'] or ni.t - s['t0'] > 10.0 or stuck:
             if stuck:
-                self._ev(ni.t, grid='backing: the dog does not move backwards - going on without it')
+                self.back_ok = False              # once is enough: never try again this run (live: endless retries)
+                self._ev(ni.t, grid='backing: the dog does not move backwards - no more backing this run')
             self._set('PLAN', ni.t)
             self.plan_t = -1e9
             return NavOut(Cmd(), '')
