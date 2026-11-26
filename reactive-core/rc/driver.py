@@ -1,6 +1,7 @@
 """Driving state machine (spec sections 6 and 9.3).
 
-Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT).
+Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT), and
+GRID (nav_mode grid: rc/cellnav.py drives cell centre to cell centre; stairs / HOLD as below).
 The driver only proposes a command; the guard (rc/guard.py) filters every command afterwards.
 Headings in lanes are body-relative (0 = straight ahead, + = left); targets are stored as
 odom-frame yaw so they survive the dog's own rotation.
@@ -13,10 +14,11 @@ import numpy as np
 
 from rc import gait as Gt
 from rc import geometry as G
+from rc.cellnav import NavIn
 from rc.guard import Cmd
 from rc.stairs import StairsResult
 
-CRUISE, TURN, BLOCKED, HOLD, STAIRS = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS'
+CRUISE, TURN, BLOCKED, HOLD, STAIRS, GRID = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS', 'GRID'
 
 
 @dataclass
@@ -35,6 +37,12 @@ class DriverInput:
     last_cmd: Cmd = field(default_factory=Cmd)   # previous GUARDED command (what the dog was sent)
     dist_from_start: float = 0.0
     front_dist: float = math.inf        # free distance straight ahead (raw scan), for the odometry cross-check
+    apose: tuple = None                 # arena pose (grid mode)
+    nav_pts: np.ndarray = None          # body-frame blocking points for the grid navigator's lane check
+    elapsed: float = 0.0
+    mission: dict = None                # /quad/mission_status
+    curtain_det: dict = None            # persistent camera curtain detection
+    answers: list = field(default_factory=list)
 
 
 @dataclass
@@ -45,6 +53,9 @@ class DriverOutput:
     codes: list = field(default_factory=list)
     events: list = field(default_factory=list)
     stairs_mode: bool = False
+    ask: dict = None                    # question for perception (/quad/vlm_ask)
+    front_ignore: tuple = None          # guard: front-stop band ignored (curtain push)
+    reverse_ok: bool = False            # guard: curtain retreat
 
 
 class Driver:
@@ -82,6 +93,13 @@ class Driver:
         self.odom_frozen = False        # leg odometry did not move while the lidar saw us move
         self.cmd_dist = 0.0             # distance by the guarded command (fallback when odometry is frozen)
         self._last_step_t = None
+        self.nav = None                 # rc.cellnav.CellNav in grid mode (set by core)
+        self.grid_fallback_until = -1e9
+        self.nav_ask = None
+        self.front_ignore = None
+        self.reverse_ok = False
+        self.stair_cells = []           # arena cells passed while climbing / descending (grid mode)
+        self.stair_from = None          # want_stairs of the crossing in progress
 
     # ---------------------------------------------------------------- helpers
     def _dist(self, di):
@@ -106,6 +124,12 @@ class Driver:
         self._ev(t, resume=reason)
         self.hold_reason = ''
         self.prog.clear()
+        if self.nav is not None:
+            self.nav.fails.clear()
+            self.nav.prog.clear()
+            self.nav.plan_t = -1e9
+            if self.nav.phase not in ('LOOK', 'PAUSE'):
+                self.nav.phase = 'PLAN'
         if self._resume_phase in ('CLIMB', 'DESCEND'):
             self.mode, self.phase = STAIRS, self._resume_phase
             self.stair['t_phase'] = t
@@ -205,6 +229,7 @@ class Driver:
         c = self.c
         t = di.t
         self.events, self.codes = [], []
+        self.nav_ask, self.front_ignore, self.reverse_ok = None, None, False
         if self.t_start is None:
             self.t_start = t
             self.last_new_cell_t = t
@@ -235,6 +260,9 @@ class Driver:
 
         if self.mode == STAIRS:
             return self._out(self._stairs(di, dyaw))
+
+        if self.nav is not None and di.apose is not None:
+            return self._grid(di, dyaw)
 
         # ---- stairs triggers (normal modes) ----
         st = di.stairs
@@ -432,6 +460,8 @@ class Driver:
                 return Cmd()
             if self.phase == 'ABORT':
                 self.stairs_mode = False
+                if self.nav is not None:
+                    self.nav.on_stairs_aborted(t, (self.stair_from or {}).get('cell'))
                 self._hold(t, 'ai_no_response' if st_ == 'done' else 'rug_no_response')
                 return Cmd()
             # EXIT
@@ -441,6 +471,8 @@ class Driver:
                 self.mode, self.phase = CRUISE, ''
                 self.target_yaw = None
                 self._ev(t, stairs='DONE')
+                if self.nav is not None:
+                    self._grid_stairs_done(di)
             else:
                 self._hold(t, 'rug_no_response')
             return Cmd()
@@ -524,6 +556,73 @@ class Driver:
             return Cmd(c['stair_vx_down'], wz)
         return Cmd()
 
+    # ---------------------------------------------------------------- grid mode
+    def _grid(self, di, dyaw):
+        c, t = self.c, di.t
+        if t < self.grid_fallback_until:
+            return self._out(self._navigate(di, dyaw))       # reactive wandering until the plan is back
+        ni = NavIn(t=t, apose=di.apose, pts=di.nav_pts if di.nav_pts is not None else np.zeros((0, 2)),
+                   travelled=self._dist(di), odom_ok=di.odom_ok or self.odom_frozen, elapsed=di.elapsed,
+                   last_vx=di.last_cmd.vx, mission=di.mission, curtain_det=di.curtain_det, answers=di.answers)
+        no = self.nav.step(ni)
+        self.events.extend(no.events)
+        self.nav_ask = no.ask
+        self.front_ignore, self.reverse_ok = no.front_ignore, no.reverse_ok
+        if no.hold:
+            self.phase = no.phase
+            self._hold(t, no.hold)
+            return self._out(Cmd())
+        if no.fallback:
+            self.grid_fallback_until = t + c['grid_fallback_s']
+            self.target_yaw = None
+            self._ev(t, grid='no plan: reactive wall following for %.0f s' % c['grid_fallback_s'])
+            return self._out(self._navigate(di, dyaw))
+        if no.want_stairs is not None:
+            return self._out(self._grid_stairs(di, no.want_stairs, dyaw))
+        self.mode, self.phase = GRID, no.phase
+        return self._out(no.cmd)
+
+    def _grid_stairs(self, di, ws, dyaw):
+        """The navigator stands squared up in front of a stairs cell: start the stairs sequence."""
+        c, t = self.c, di.t
+        st = di.stairs
+        self.mode, self.phase = GRID, 'STAIRS_WAIT'
+        if c['stairs'] != 'climb':
+            self._hold(t, 'stairs_manual')            # stairs off / detect: the Captain takes them
+            return Cmd()
+        lidar_ok = (st.kind == 'up' and st.confident and st.edge_x < 2.5
+                    and abs(G.wrap(st.heading - ws['bearing'])) < math.radians(25.0))
+        waited = t - ws['t0']
+        if not lidar_ok and waited < c['stair_wait_s']:
+            return Cmd()
+        if not lidar_ok:
+            if not c['stairs_grid_fallback']:
+                self._hold(t, 'stairs_unsure')
+                return Cmd()
+            # the lidar does not see the steps as stairs: the stairs cell's border stands in for the first riser
+            di.stairs = StairsResult(kind='up', heading=ws['bearing'], edge_x=ws['edge'], confident=True)
+            self._ev(t, stairs_grid='no confident lidar stairs after %.0f s: approach on the grid' % waited)
+        self.stair_from = dict(ws)
+        self.stair_cells = []
+        self._begin_approach(di)
+        self.stair['grid'] = not lidar_ok
+        self.nav.on_stairs_started(t)
+        return self._stairs(di, dyaw)
+
+    def _grid_stairs_done(self, di):
+        cells = [tuple(cl) for cl in self.stair_cells]
+        here = None
+        if di.apose is not None:
+            here = self.nav.m.cell_of(di.apose[0], di.apose[1])
+        first = cells[0] if cells else None
+        on = [cl for cl in dict.fromkeys(cells) if cl != here and cl != first]
+        if not on and self.stair_from is not None:
+            on = [tuple(self.stair_from['cell'])]
+        self.nav.on_stairs_done(di.t, on)
+        self.stair_from = None
+        self.mode, self.phase = GRID, 'PLAN'
+
     def _out(self, cmd):
         return DriverOutput(cmd=cmd, mode=self.mode, phase=self.phase, codes=list(self.codes),
-                            events=list(self.events), stairs_mode=self.stairs_mode)
+                            events=list(self.events), stairs_mode=self.stairs_mode, ask=self.nav_ask,
+                            front_ignore=self.front_ignore, reverse_ok=self.reverse_ok)

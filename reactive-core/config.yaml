@@ -100,6 +100,118 @@ stair_max_s: 90.0
 stair_no_progress_s: 3.0
 stair_hold_err_deg: 15               # climb / descend walk straight, never turn on a step: heading error above this -> HOLD (stays in AI)
 
+# ---- GRID NAVIGATION (branch grid-nav, 2026-11-26): arena map + grid snap + cell planner ----
+# nav_mode grid: the dog drives cell centre to cell centre over its own map of the 3 x 5 (+1) arena
+# (rc/arena.py, rc/localize.py, rc/cellplan.py, rc/cellnav.py). nav_mode wall: the old wall following.
+nav_mode: grid                       # grid | wall
+arena_cell_m: 1.02                   # booklet v6.4 E: cell centres 1.02 m apart (1.00 m panels + 0.02 m posts)
+arena_long: 5                        # 3 x 5 cells, start cell in the first row (booklet H)
+arena_short: 3
+pose_src: leg                        # leg (leg odometry + gyro yaw) | lio (FAST-LIO base pose, falls back to leg)
+loc_jump_m: 0.30                     # an odometry step longer than this is a jump, not a motion
+hyp_pen_slack: 0                     # placements this many penalty points worse than the best are dropped
+hyp_open_min: 40                     # an OPEN border into a cell outside a placement penalises it (rays needed)
+visit_r_m: 0.40                      # cell visited = base_link within this of its centre
+visit_blocked_r_m: 0.65              # ... or within this when an obstacle stands at the centre
+seen_min_n: 30                       # floor returns inside a cell -> 'seen' (viewer)
+# border evidence (heights above the stance floor). Panel: MID hit. Hanging curtain: MID pass + UP hit.
+edge_range_m: 3.0
+edge_max_pts: 6000
+edge_mid_lo: 0.22
+edge_mid_hi: 0.42
+edge_up_lo: 0.62
+edge_up_hi: 0.95
+edge_tol_m: 0.06                     # a return within this of the border line is ON it
+edge_margin_m: 0.12                  # border ends (posts, corners) ignored
+edge_cap_per_scan: 30
+edge_count_max: 400                  # evidence is rescaled above this (new scans can still flip a state)
+edge_n_min: 12
+edge_wall_ratio: 0.60                # MID hits / (hits + passes) >= this -> WALL
+edge_open_ratio: 0.30                # <= this -> OPEN (or CURTAIN if the UP band is blocked)
+edge_curtain_up_ratio: 0.60
+observe_hz: 2.0
+# grid snap (position + heading from the panels; rc/localize.py)
+snap: true
+snap_hz: 3.0
+snap_z_lo: 0.22                      # wall returns: height above the stance floor
+snap_z_hi: 0.60
+snap_range_m: 2.5
+snap_max_pts: 3000
+snap_min_pts: 60
+snap_yaw_max_deg: 6.0
+snap_yaw_gain_min: 0.02              # the best rotation must sharpen the histograms by 2 %
+snap_peak_min: 15                    # points in a panel peak
+snap_peak_span_m: 0.35               # a panel peak must be this long (props / posts are shorter) ...
+snap_peak_fill: 0.70                 # ... and continuous over this share of it (not two side walls)
+snap_agree_m: 0.08                   # panel offsets on one axis must agree within this
+snap_max_off_m: 0.25                 # offsets beyond this are not panels on border lines
+snap_gain: 0.5
+snap_cap_deg: 2.0                    # per update
+snap_cap_m: 0.08
+snap_max_wz: 0.15                    # no snap while turning faster (smeared scan)
+snap_max_tilt_deg: 8.0
+# planner (rc/cellplan.py)
+plan_turn_cost: 0.3                  # per 90 deg
+plan_unknown_cost: 0.5
+plan_curtain_cost: 2.0
+plan_stairs_cost: 12.0               # stairs are crossed when nothing else is left on this side
+plan_tour_weight: 1.0                # 0 = nearest target; 1 = nearest + greedy tour of the rest
+plan_max_cells: 7
+plan_period_s: 1.0
+plan_commit_margin: 1.0              # keep the current goal unless another is this much cheaper
+explore_budget_s: 450.0              # after this (minus the drive there) go to the final cell; 0 = never
+budget_margin_s: 30.0
+eta_cell_s: 2.0                      # time estimates: extra per cell (pause, slowing) ...
+eta_turn_s: 4.0                      # ... per 90 deg turn ...
+eta_stairs_s: 60.0                   # ... for the stairs sequence
+# navigator (rc/cellnav.py)
+arrive_tol_m: 0.10
+centre_tol_m: 0.15                   # big turns only this close to a cell centre (turn circle ~0.39 m)
+grid_vx_near: 0.12                   # last 0.35 m to a centre
+grid_lookahead_m: 0.80               # aim point on the cell centre line this far ahead
+grid_run_cells: 3                    # straight runs through visited cells without stopping
+walk_wz_max: 0.0                     # > 0: steer up to this while walking (guard allows it); 0 = turn OR walk
+walk_wz_k: 1.0
+grid_prog_s: 3.0                     # walking this long ...
+grid_prog_m: 0.08                    # ... with less progress -> border blocked, replan
+grid_max_fails: 4                    # failures within 40 s -> HOLD no_progress
+grid_block_s: 25.0                   # a blocked border is avoided this long
+grid_block_evidence: 15.0            # WALL evidence added to a border the lane check found blocked
+cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)
+grid_fallback_s: 15.0                # no plan: reactive wall following this long, then plan again
+# curtain: border CURTAIN from the lidar (open below the hem, cloth above) or the camera
+curtain: push                        # off | detect | push
+cur_cue_min: 3.0                     # camera curtain detections pointing at a wall-like border -> CURTAIN
+cur_ask_camera: true                 # lidar-only curtain: ask perception's camera first (no answer -> push)
+cur_vlm_wait_s: 8.0
+cur_probe: true                      # exploration done, arena cells unvisited behind a wall: ask the camera
+cur_probe_touch: false               # ... and with no camera answer push anyway (touch test)
+cur_push_vx: 0.12
+cur_ignore_m: 0.35                   # the guard ignores returns this far beyond the border while pushing
+cur_clear_m: 0.45                    # passed when base_link is this far beyond the border
+cur_nose_m: 0.30                     # base_link -> nose
+cur_stall_m: 0.04                    # touch test: less progress than this ...
+cur_stall_s: 2.0                     # ... in this long while pushing = rigid (a wall)
+cur_retreat_m: 0.15                  # after 'rigid': back off this far (the ONLY reverse; 0 = off)
+cur_retreat_vx: 0.08
+cur_max_s: 30.0
+curtain_hold_err_deg: 15
+# QR (M04): in a survivor room (perception) with the QR not read, look at its walls
+qr_look: true
+qr_look_on_seen: true                # also when perception located a QR it could not read
+qr_look_s: 2.5
+qr_look_skew_deg: 35.0               # second look skewed towards the entrance half (booklet: nearer half)
+# camera model detections (/rc/detections from rc/vision_node.py, best.pt)
+cam_det_conf: 0.5
+cam_det_n: 3
+cam_det_window_s: 1.5
+cam_det_cone_deg: 20.0
+# stairs in grid mode: the planner decides when; the driver's stairs sequence crosses
+stair_wait_s: 4.0                    # squared up before the stairs: wait this long for the lidar detector ...
+stairs_grid_fallback: true           # ... then approach on the grid (border = first riser) instead of HOLD
+stairs_ask_camera: true              # a blocked OPEN border: ask the camera whether it is stairs
+publish_arena_odom: true             # /rc/odom (nav_msgs/Odometry, arena frame) for perception's positions
+
 # ---- start-up / posture (spec section 4) ----
 knee_names: [LF_Joint_2, RF_Joint_2, LB_Joint_2, RB_Joint_2]
 sit_knee: -2.4                       # mean knee below this = sitting (~ -2.75 measured)

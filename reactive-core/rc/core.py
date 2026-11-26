@@ -12,8 +12,12 @@ import numpy as np
 from rc import geometry as G
 from rc import lanes as L
 from rc import posture as P
+from rc.arena import ArenaMap
 from rc.attitude import Attitude
-from rc.driver import Driver, DriverInput, HOLD
+from rc.camcues import DetectionPersist
+from rc.cellnav import CellNav
+from rc.driver import Driver, DriverInput, HOLD, STAIRS
+from rc.localize import GridLocalizer
 from rc.grid import Grid
 from rc.guard import Cmd, Guard, GuardInput
 from rc.liomap import LioMap
@@ -72,6 +76,26 @@ class Core:
         self.pending_events = []
         self.path = []
         self.last_guard = []
+        # ---- grid navigation (arena map, grid snap, cell planner / navigator)
+        self.amap = ArenaMap(cfg)
+        self.loc = GridLocalizer(cfg)
+        if cfg['nav_mode'] == 'grid':
+            self.driver.nav = CellNav(cfg, self.amap)
+        self.src_name = None
+        self.odom_raw = None
+        self.obs_t = -1e9
+        self.apath = []                            # arena path (viewer)
+        self.t_go = None
+        self.mission = None                        # /quad/mission_status (perception)
+        self.mission_t = None
+        self.answers = []                          # /quad/vlm_answer since the last decision
+        self.pending_asks = []                     # -> /quad/vlm_ask
+        self.qevents = []                          # recent /quad/event (viewer)
+        self.cam = {k: DetectionPersist(k, cfg['cam_det_conf'], cfg['cam_det_n'], cfg['cam_det_window_s'],
+                                        cfg['cam_det_cone_deg']) for k in ('curtain', 'stairs', 'human')}
+        self.cue_t = -1e9
+        self.stairs_hints = {}
+        self.last_snap = None
 
     # ---------------------------------------------------------------- inputs
     def set_mount(self, xyz, pitch):
@@ -105,15 +129,20 @@ class Core:
         self.arrival['joints'] = t
 
     def on_odom(self, x, y, yaw, t):
+        self.odom_raw = (x, y, yaw)
         if self.c['yaw_source'] == 'gyro':
             if self.yaw_g is None:
                 self.yaw_g = yaw                   # start aligned with the odom frame
             yaw = self.yaw_g
         self.odom.update(x, y, yaw, t, abs(self.last_cmd.vx))
         self.arrival['odom'] = t
+        if self.started and self.src_name == 'leg':
+            self.loc.feed('leg', self.odom_raw, self.heading())
 
     def on_lio(self, pos, quat, t):
         bad = self.lio.on_pose(pos, quat, t)
+        if bad is None and self.started and self.src_name == 'lio':
+            self.loc.feed('lio', self.lio_base_pose(), self.heading())
         if bad is not None:
             self.map_extra = np.zeros((0, 2))
             self.pending_events.append({'t': round(t, 2), 'lio_bad': bad + ' - map off, live scan only'})
@@ -140,6 +169,128 @@ class Core:
             self.map_extra = np.zeros((0, 2))
         self.lio.add(xs, t)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
+        self._grid_cloud(p, t)
+
+    # ---------------------------------------------------------------- grid navigation
+    def lio_base_pose(self):
+        """base_link pose (x, y, yaw) from FAST-LIO, in the base frame at FAST-LIO's start
+        (lidar_init is the tilted sensor frame: T = T_base_lidar . T_init_lidar(t) . T_lidar_base)."""
+        if not self.lio.ok or self.lio.pose_t is None:
+            return None
+        Rm = G.rot_y(self.mount.pitch)
+        tm = np.asarray(self.mount.xyz, dtype=float)
+        R = Rm @ self.lio.R @ Rm.T
+        pt = Rm @ (self.lio.R @ (-Rm.T @ tm) + self.lio.p) + tm
+        return float(pt[0]), float(pt[1]), math.atan2(R[1, 0], R[0, 0])
+
+    def heading(self):
+        """The dog's heading (gyro-integrated yaw with yaw_source gyro)."""
+        return None if self.odom.pose is None else self.odom.pose[2]
+
+    def _pick_src(self, t):
+        want = 'leg'
+        if self.c['pose_src'] == 'lio' and self.lio.usable(t) and self.lio_base_pose() is not None:
+            want = 'lio'
+        if want != self.src_name:
+            self.pending_events.append({'t': round(t, 2), 'pose_src': want})
+            self.src_name = want
+
+    def apose(self, t=None):
+        """Arena pose (x, y, yaw): booklet frame, origin start cell centre, +X start heading, +Y left."""
+        if not self.started:
+            return None
+        return self.loc.pose(self.heading())
+
+    def _grid_cloud(self, p, t):
+        if not self.started:
+            return
+        c = self.c
+        hd = self.heading()
+        if hd is None:
+            return
+        on_stairs = self.driver.mode == STAIRS or self.driver.stairs_mode
+        pushing = self.driver.front_ignore is not None
+        level = self.att.tilt_deg() < c['snap_max_tilt_deg']
+        self.last_snap = self.loc.update(p, self.floor_z, hd, t, gyro_z=self.gyro[2],
+                                         tilt_deg=self.att.tilt_deg(), allowed=not on_stairs and not pushing) or self.last_snap
+        if on_stairs or not level or t - self.obs_t < 1.0 / c['observe_hz'] - 1e-6:
+            return
+        self.obs_t = t
+        ap = self.loc.pose(hd)
+        if ap is None or p.shape[0] == 0:
+            return
+        cs, sn = math.cos(ap[2]), math.sin(ap[2])
+        P_ = np.empty((p.shape[0], 3))
+        P_[:, 0] = ap[0] + cs * p[:, 0] - sn * p[:, 1]
+        P_[:, 1] = ap[1] + sn * p[:, 0] + cs * p[:, 1]
+        P_[:, 2] = p[:, 2] - self.floor_z
+        sx, sy, sz = level_points(np.zeros((1, 3)), self.mount, self.att.roll, self.att.pitch)[0]
+        S = (ap[0] + cs * sx - sn * sy, ap[1] + sn * sx + cs * sy, sz - self.floor_z)
+        self.amap.observe(P_, S, t)
+
+    # ---- perception inputs (std_msgs/String JSON, see perception/README.md)
+    def on_detections(self, dets, t):
+        for d in self.cam.values():
+            d.update(dets, t)
+
+    def on_mission_status(self, st, t):
+        self.mission, self.mission_t = st, t
+        m = self.amap
+        try:
+            for key, scene in (st.get('scenes') or {}).items():
+                i, j = (int(v) for v in str(key).split(','))
+                m.set_label((i, j), 'scene', scene)
+            for cl in st.get('survivor_cells') or []:
+                m.set_label(tuple(cl), 'survivor', True)
+            for tid, tk in (st.get('tasks') or {}).items():
+                if tk.get('reported') and tk.get('pos'):
+                    cl = m.cell_of(float(tk['pos'][0]), float(tk['pos'][1]))
+                    lab = tk.get('label') or tk.get('type') or ''
+                    m.set_label(cl, tid, lab)
+            if (st.get('qr') or {}).get('read'):
+                for cl in st.get('survivor_cells') or []:
+                    m.set_label(tuple(cl), 'qr', (st['qr'].get('text') or '')[:40])
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+    def on_quad_event(self, ev, t):
+        self.qevents = (self.qevents + [dict(ev, rt=round(t, 2))])[-12:]
+
+    def on_vlm_answer(self, ans, t):
+        self.answers.append(ans)
+        self.pending_events.append({'t': round(t, 2), 'vlm_answer': ans})
+
+    def _grid_cues(self, t, ap):
+        """Camera / lidar cues into the map (2 Hz)."""
+        if ap is None or t - self.cue_t < 0.5:
+            return
+        self.cue_t = t
+        m = self.amap
+        x, y, yaw = ap
+        here = m.cell_of(x, y)
+        cd = self.cam['curtain'].seen(t)
+        if cd is not None:
+            k = m.add_curtain_cue(x, y, yaw + cd['bearing'], t)
+            if k is not None and m.edge(k).cue == self.c['cur_cue_min']:
+                self.pending_events.append({'t': round(t, 2), 'curtain_cue': list(k)})
+        st = self.stairs
+        if st.kind == 'up' and st.confident and st.edge_x < 2.5:
+            h = yaw + st.heading
+            d = st.edge_x + 0.25
+            cl = m.cell_of(x + d * math.cos(h), y + d * math.sin(h))
+            if cl != here and not m.visited(cl) and m.mark_stairs(cl, 'lidar'):
+                self.pending_events.append({'t': round(t, 2), 'stairs_cell': list(cl), 'src': 'lidar'})
+        sd = self.cam['stairs'].seen(t)
+        if sd is not None:
+            h = yaw + sd['bearing']
+            for d in (0.8, 1.2, 1.6, 2.0):
+                cl = m.cell_of(x + d * math.cos(h), y + d * math.sin(h))
+                if cl == here or m.visited(cl):
+                    continue
+                self.stairs_hints[cl] = self.stairs_hints.get(cl, 0) + 1
+                if m.terrain(cl) == 'elevated' and self.stairs_hints[cl] >= 2 and m.mark_stairs(cl, 'camera'):
+                    self.pending_events.append({'t': round(t, 2), 'stairs_cell': list(cl), 'src': 'camera+lidar'})
+                break
 
     # ---------------------------------------------------------------- helpers
     def ages(self, t):
@@ -158,7 +309,8 @@ class Core:
         return self.map_extra if self.lio.usable(t) else np.zeros((0, 2))
 
     def guard_input(self, t):
-        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t)
+        return GuardInput(obs_now=self.scan.obs_now, ages=self.ages(t), tilt_deg=self.att.tilt_deg(), t=t,
+                          front_ignore=self.driver.front_ignore, reverse_ok=self.driver.reverse_ok)
 
     def filter(self, cmd, t):
         """Guard a command (used for start-up and gait tests too)."""
@@ -174,6 +326,12 @@ class Core:
         self.grid.set_origin(pose)
         self.grid.update(pose)
         self.started = True
+        self.t_go = t
+        self.loc.start(self.heading() if self.heading() is not None else 0.0)
+        self.src_name = None
+        self._pick_src(t)
+        self.loc.feed(self.src_name, self.lio_base_pose() if self.src_name == 'lio' else self.odom_raw,
+                      self.heading())
         self.pending_events.append({'t': round(t, 2), 'start': [round(v, 3) for v in pose],
                                     'floor_z': round(self.floor_z, 3)})
 
@@ -195,6 +353,25 @@ class Core:
             else:
                 events.append({'t': round(t, 2), 'odom_ok': True})
             self.odom_was_ok = ok
+        ap = None
+        if t - self.last_drive_t >= 1.0 / self.c['rate_hz'] - 1e-6:
+            self._pick_src(t)
+            ap = self.apose(t)
+            if ap is not None:
+                if self.driver.mode != STAIRS or self.driver.phase in ('LOOK', 'APPROACH'):
+                    new = self.amap.on_pose(ap[0], ap[1], t)
+                    if new is not None:
+                        events.append({'t': round(t, 2), 'arena_cell': list(new),
+                                       'pos': [round(new[0] * self.amap.L, 2), round(new[1] * self.amap.L, 2)]})
+                elif self.driver.phase in ('CLIMB', 'DESCEND'):
+                    cl = self.amap.cell_of(ap[0], ap[1])
+                    if not self.driver.stair_cells or self.driver.stair_cells[-1] != cl:
+                        self.driver.stair_cells.append(cl)
+                events.extend(self.amap.events)
+                self.amap.events = []
+                self._grid_cues(t, ap)
+                if not self.apath or math.hypot(self.apath[-1][0] - ap[0], self.apath[-1][1] - ap[1]) > 0.05:
+                    self.apath.append((round(ap[0], 3), round(ap[1], 3)))
         if t - self.last_drive_t >= 1.0 / self.c['rate_hz'] - 1e-6:
             self.last_drive_t = t
             mem = self._mem_body(t)
@@ -209,8 +386,14 @@ class Core:
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
                              last_cmd=self.last_cmd, dist_from_start=self.dist_from_start(),
-                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']))
+                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
+                             apose=ap, nav_pts=np.vstack([self.scan.obs, self.scan.drops, mem.reshape(-1, 2)]),
+                             elapsed=t - (self.t_go if self.t_go is not None else t), mission=self.mission,
+                             curtain_det=self.cam['curtain'].seen(t), answers=self.answers)
+            self.answers = []
             out = self.driver.step(di)
+            if out.ask is not None:
+                self.pending_asks.append(out.ask)
             self.drive_out = out
             self.drive_cmd = out.cmd
             codes.extend(out.codes)
@@ -241,7 +424,18 @@ class Core:
             'ages': {k: (None if math.isinf(v) else round(v, 2)) for k, v in self.ages(t).items()},
             'stairs': self.stairs.kind, 'wall_side': 'left' if d.side > 0 else 'right',
             'guard': list(self.last_guard),
+            'nav': self.c['nav_mode'], 'acell': self._acell(t), 'apos': self._apos(t),
+            'src': self.src_name, 'elapsed': None if self.t_go is None else round(t - self.t_go, 1),
+            'visited': len(self.amap.order), 'bounds': self.amap.bounds_known(),
         }
+
+    def _acell(self, t):
+        ap = self.apose(t) if self.started else None
+        return None if ap is None else list(self.amap.cell_of(ap[0], ap[1]))
+
+    def _apos(self, t):
+        ap = self.apose(t) if self.started else None
+        return None if ap is None else [round(ap[0], 2), round(ap[1], 2), round(math.degrees(ap[2]), 1)]
 
     def snapshot(self, t=None):
         """JSON-ready state for the viewer and snapshots.jsonl (grid metres: +x right, +y forward)."""

@@ -30,6 +30,8 @@ class GuardInput:
     ages: dict = field(default_factory=dict)       # feed name -> seconds since last arrival
     tilt_deg: float = 0.0                          # max(|roll|, |pitch|)
     t: float = None
+    front_ignore: tuple = None                     # (x0, x1) body-x band the front stop ignores (curtain push)
+    reverse_ok: bool = False                       # curtain retreat: a slow reverse is allowed (only there)
 
 
 class Guard:
@@ -40,13 +42,16 @@ class Guard:
         self.latched = False
         self.tilted = False          # stopped by tilt, waiting for tilt < tilt_resume_deg
 
-    def front_dist(self, obs):
-        """Distance from the sensor to the nearest obstacle ahead in the body corridor."""
+    def front_dist(self, obs, ignore=None):
+        """Distance from the sensor to the nearest obstacle ahead in the body corridor. `ignore`: a
+        body-x band (x0, x1) left out (the curtain cloth while pushing through it)."""
         obs = np.asarray(obs, dtype=float).reshape(-1, 2)
         if obs.shape[0] == 0:
             return math.inf
         half = self.c['footprint_w'] / 2.0 + self.c['guard_corridor_margin_m']
         m = (obs[:, 0] > self.sensor_x) & (np.abs(obs[:, 1]) < half)
+        if ignore is not None:
+            m &= ~((obs[:, 0] >= ignore[0]) & (obs[:, 0] <= ignore[1]))
         return float(obs[m, 0].min() - self.sensor_x) if m.any() else math.inf
 
     def filter(self, cmd, gi):
@@ -71,12 +76,19 @@ class Guard:
 
         reasons = []
         if vx < 0.0:
-            vx = 0.0
-            reasons.append('no_reverse')
-        if vx > 0.0 and self.front_dist(gi.obs_now) < c['stop_m']:
+            if gi.reverse_ok and wz == 0.0:
+                vx = max(vx, -0.10)                # curtain retreat over the ground just walked in on
+                reasons.append('reverse_retreat')
+            else:
+                vx = 0.0
+                reasons.append('no_reverse')
+        if vx > 0.0 and self.front_dist(gi.obs_now, gi.front_ignore) < c['stop_m']:
             vx = 0.0
             reasons.append('front_stop')
-        if vx > 0.0 and wz != 0.0:
-            wz = 0.0
+        if gi.front_ignore is not None and vx > 0.0:
+            reasons.append('curtain_push')
+        wmax = float(c.get('walk_wz_max', 0.0))
+        if vx > 0.0 and abs(wz) > wmax:
+            wz = math.copysign(wmax, wz) if wmax > 0 else 0.0
             reasons.append('walk_no_turn')
         return Cmd(vx, wz), reasons

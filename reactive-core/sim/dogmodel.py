@@ -18,11 +18,17 @@ STEP_AI = 0.22            # AI Basic climbs stairs
 class DogModel:
 
     def __init__(self, world, x=0.0, y=0.0, yaw=0.0, sitting=False, ai_ignores_cmd=False,
-                 wobble_deg=2.0, seed=0, stand_time=3.0, odom_mode='ok'):
+                 wobble_deg=2.0, seed=0, stand_time=3.0, odom_mode='ok', odom_scale=1.0,
+                 odom_yaw_drift=0.0, gyro_scale=0.0, gyro_bias=0.0):
         self.w = world
         self.x, self.y, self.yaw = x, y, yaw
         self.x0, self.y0, self.yaw0 = x, y, yaw
         self.odom_mode = odom_mode
+        self.odom_scale = odom_scale            # leg odometry distance error (1.05 = 5 % long)
+        self.odom_yaw_drift = odom_yaw_drift    # rad/s: direction error of the leg odometry grows
+        self.gyro_scale = gyro_scale            # turn rate error of the gyro (0.03 = 3 %)
+        self.gyro_bias = gyro_bias
+        self.ox, self.oy, self.od = x, y, 0.0   # integrated (drifting) leg odometry
         self.support = 0.0
         self.front_support = 0.0
         self.vx = 0.0
@@ -98,6 +104,10 @@ class DogModel:
             self.vx = 0.0
         else:
             self.in_contact = False
+            dxy = math.hypot(nx - self.x, ny - self.y)
+            self.od += self.odom_yaw_drift * dt
+            self.ox += self.odom_scale * dxy * math.cos(nyaw + self.od) * (1 if self.vx >= 0 else -1)
+            self.oy += self.odom_scale * dxy * math.sin(nyaw + self.od) * (1 if self.vx >= 0 else -1)
             self.x, self.y, self.yaw = nx, ny, G.wrap(nyaw)
         # support under the front and rear feet -> height and pitch
         c, s = math.cos(self.yaw), math.sin(self.yaw)
@@ -120,7 +130,7 @@ class DogModel:
         g = 9.81
         th, ph = self.pitch, self.roll
         acc = (-g * math.sin(th), g * math.sin(ph) * math.cos(th), g * math.cos(ph) * math.cos(th))
-        gyro = (0.0, (self.pitch - self.prev_pitch) / max(dt, 1e-3), self.wz)
+        gyro = (0.0, (self.pitch - self.prev_pitch) / max(dt, 1e-3), self.wz * (1.0 + self.gyro_scale) + self.gyro_bias)
         return acc, gyro
 
     def joints(self):
@@ -142,4 +152,6 @@ class DogModel:
             return self.x0, self.y0, self.yaw
         if self.odom_mode == 'frozen_yaw':         # yaw never updates (position does)
             return self.x, self.y, self.yaw0
+        if self.odom_mode == 'drift':              # scale + direction error, integrated
+            return self.ox, self.oy, G.wrap(self.yaw + self.od)
         return self.x, self.y, self.yaw

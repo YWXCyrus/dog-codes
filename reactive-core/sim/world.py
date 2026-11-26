@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 SOLID = ('wall', 'low_back', 'block')   # never climbed, never stood on
+SOFT = ('curtain',)                     # seen by the lidar, the dog walks through (cloth on a bar)
 
 
 @dataclass
@@ -65,7 +66,7 @@ class World:
         from `current` (<= current + max_step); the floor otherwise. Walls are never stood on."""
         best = 0.0
         for b in self.boxes:
-            if b.name in SOLID:
+            if b.name in SOLID or b.name in SOFT:
                 continue
             if b.z1 <= current + max_step + 1e-9 and b.contains_xy(x, y):
                 best = max(best, b.z1)
@@ -75,6 +76,8 @@ class World:
         """Boxes that the footprint sample points (xs, ys) would hit at this support height."""
         hits = []
         for b in self.boxes:
+            if b.name in SOFT:
+                continue
             step = 0.02 if b.name in SOLID else max_step
             if b.z1 > support + step + 1e-9 and b.z0 < support + body_top:
                 if np.any(b.contains_xy(xs, ys)):
@@ -119,3 +122,175 @@ def arena_default():
     # a free-standing block
     w.add(Box(5.0, 0.6, 0.6, 0.6, 0.0, 0.6, 0.0, 'block'))
     return w
+
+
+# ---------------------------------------------------------------------------------------------
+# Competition-like arenas (booklet v6.4): 3 x 5 cells of 1.02 m + the final cell, panels on the
+# cell borders, start cell (0, 0) in the first row, the dog facing +X (arena frame = world frame).
+L_CELL = 1.02
+
+
+def edge_segment(k, L=L_CELL):
+    """Border key (i, j, 'x'|'y') -> wall segment (x0, y0, x1, y1)."""
+    i, j, ax = k
+    if ax == 'x':
+        x = (i + 0.5) * L
+        return x, (j - 0.5) * L, x, (j + 0.5) * L
+    y = (j + 0.5) * L
+    return (i - 0.5) * L, y, (i + 0.5) * L, y
+
+
+def _ekey(a, b):
+    if a[0] != b[0]:
+        return (min(a[0], b[0]), a[1], 'x')
+    return (a[0], min(a[1], b[1]), 'y')
+
+
+def _nbrs(c):
+    i, j = c
+    return [(i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)]
+
+
+def build_arena(rect, final, open_edges, curtains=(), boards=(), stairs=None, wall_h=0.6, curtain_low=0.45,
+                floor_curtains=(), props=(), L=L_CELL, t=0.05):
+    """rect = (i0, i1, j0, j1) arena cells; final = the +1 cell (its far side open); open_edges /
+    curtains = border keys without panel / with a hanging curtain (open below curtain_low);
+    floor_curtains = curtains down to the floor; boards = cells with low strips (uneven terrain);
+    stairs = {'cells': [...], 'dir': 'x'|'y', 'sign': +1|-1, 'n': 2, 'rise': 0.12, 'tread': 0.25,
+    'platform': 0.5}; props = cells with a 0.4 m box at the centre."""
+    i0, i1, j0, j1 = rect
+    cells = {(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)}
+    allc = cells | {final}
+    w = World()
+    w.layout = {'rect': rect, 'final': final, 'open': set(open_edges), 'curtains': set(curtains),
+                'cells': cells}
+    done = set()
+    soft = set(curtains) | set(floor_curtains)
+    for c in allc:
+        for n in _nbrs(c):
+            k = _ekey(c, n)
+            if k in done:
+                continue
+            done.add(k)
+            inside = n in allc
+            if inside and (k in open_edges or k in soft):
+                if k in soft:
+                    x0, y0, x1, y1 = edge_segment(k, L)
+                    z0 = 0.02 if k in floor_curtains else curtain_low
+                    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+                    w.add(Box(cx, cy, L - 0.06, 0.03, z0, 1.0, math.atan2(y1 - y0, x1 - x0), 'curtain'))
+                continue
+            if c == final and not inside:
+                # the final cell: walls on its sides, its far side (towards the drone target) open
+                far = (final[0] + (final[0] - _closest(final, cells)[0]), final[1] + (final[1] - _closest(final, cells)[1]))
+                if n == far:
+                    continue
+            if n == final and c not in cells:
+                continue
+            x0, y0, x1, y1 = edge_segment(k, L)
+            w.wall(x0, y0, x1, y1, h=wall_h, t=t)
+    for c in boards:
+        cx, cy = c[0] * L, c[1] * L
+        for k in range(3):
+            w.board(cx - 0.3 + 0.3 * k, cy, 0.12, 0.9, 0.08, 'strip')
+    for c in props:
+        w.add(Box(c[0] * L, c[1] * L, 0.4, 0.4, 0.0, 0.5, 0.0, 'block'))
+    if stairs:
+        c0 = stairs['cells'][0]
+        n, rise, tread, plat = stairs.get('n', 2), stairs.get('rise', 0.12), stairs.get('tread', 0.25), stairs.get('platform', 0.5)
+        sg = stairs.get('sign', 1)
+        if stairs['dir'] == 'x':
+            x = c0[0] * L - sg * 0.5 * L + sg * 0.20
+            pos = lambda u: (x + sg * u, c0[1] * L)
+            yaw = 0.0
+        else:
+            y = c0[1] * L - sg * 0.5 * L + sg * 0.20
+            pos = lambda u: (c0[0] * L, y + sg * u)
+            yaw = math.pi / 2
+        u = 0.0
+        width = 0.9
+        for k in range(n):
+            px, py = pos(u + tread / 2.0)
+            w.add(Box(px, py, tread, width, 0.0, rise * (k + 1), yaw, 'step'))
+            u += tread
+        px, py = pos(u + plat / 2.0)
+        w.add(Box(px, py, plat, width, 0.0, rise * n, yaw, 'platform'))
+        u += plat
+        for k in range(n):
+            px, py = pos(u + tread / 2.0)
+            w.add(Box(px, py, tread, width, 0.0, rise * (n - k - 1), yaw, 'step'))
+            u += tread
+    return w
+
+
+def _closest(final, cells):
+    for n in _nbrs(final):
+        if n in cells:
+            return n
+    return final
+
+
+def random_layout(seed, axis='x', sign=1, offset=0, loops=0.25, n_long=5, n_short=3, curtain=False,
+                  final_col=None):
+    """A random perfect maze on the 3 x 5 cells (+ a few extra openings) with the start cell (0, 0)
+    in the first row. Returns the kwargs of build_arena."""
+    import random
+    rnd = random.Random(seed)
+    if axis == 'x':
+        i0, i1 = (0, n_long - 1) if sign > 0 else (-(n_long - 1), 0)
+        j0, j1 = offset, offset + n_short - 1
+    else:
+        j0, j1 = (0, n_long - 1) if sign > 0 else (-(n_long - 1), 0)
+        i0, i1 = offset, offset + n_short - 1
+    cells = [(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)]
+    cs = set(cells)
+    seen, stack, opened = {(0, 0)}, [(0, 0)], set()
+    while stack:
+        c = stack[-1]
+        nb = [n for n in _nbrs(c) if n in cs and n not in seen]
+        if not nb:
+            stack.pop()
+            continue
+        n = rnd.choice(nb)
+        opened.add(_ekey(c, n))
+        seen.add(n)
+        stack.append(n)
+    for c in cells:
+        for n in _nbrs(c):
+            if n in cs and rnd.random() < loops / 2:
+                opened.add(_ekey(c, n))
+    if axis == 'x':
+        far_i = i1 if sign > 0 else i0
+        col = rnd.randint(j0, j1) if final_col is None else final_col
+        final = (far_i + sign, col)
+        far = (far_i, col)
+    else:
+        far_j = j1 if sign > 0 else j0
+        col = rnd.randint(i0, i1) if final_col is None else final_col
+        final = (col, far_j + sign)
+        far = (col, far_j)
+    opened.add(_ekey(far, final))
+    curtains = set()
+    if curtain:
+        # one interior opening not on the final path becomes a curtain (only if a loop keeps things reachable)
+        cands = [k for k in sorted(opened) if k != _ekey(far, final) and (0, 0) not in (k[:2],)]
+        rnd.shuffle(cands)
+        for k in cands:
+            test = set(opened) - {k}
+            if _connected(cells, test):
+                curtains.add(k)
+                opened.discard(k)
+                break
+    return {'rect': (i0, i1, j0, j1), 'final': final, 'open_edges': opened, 'curtains': curtains}
+
+
+def _connected(cells, opened):
+    cs = set(cells)
+    seen, stack = {(0, 0)}, [(0, 0)]
+    while stack:
+        c = stack.pop()
+        for n in _nbrs(c):
+            if n in cs and n not in seen and _ekey(c, n) in opened:
+                seen.add(n)
+                stack.append(n)
+    return len(seen) == len(cs)
