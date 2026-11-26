@@ -272,15 +272,21 @@ def random_layout(seed, axis='x', sign=1, offset=0, loops=0.25, n_long=5, n_shor
     opened.add(_ekey(far, final))
     curtains = set()
     if curtain:
-        # one interior opening not on the final path becomes a curtain (only if a loop keeps things reachable)
-        cands = [k for k in sorted(opened) if k != _ekey(far, final) and (0, 0) not in (k[:2],)]
-        rnd.shuffle(cands)
-        for k in cands:
-            test = set(opened) - {k}
-            if _connected(cells, test):
-                curtains.add(k)
+        # 'leaf': a dead-end cell (one opening, not the start / the final's neighbour) is reachable only through
+        # a curtain; 'alt' (or True): an extra passage through a wall, hung with a curtain (an alternative route)
+        deg = {c: [k for k in opened if c in ((k[0], k[1]), (k[0] + (k[2] == 'x'), k[1] + (k[2] == 'y')))] for c in cells}
+        if curtain == 'leaf':
+            leaves = [c for c in cells if len(deg[c]) == 1 and c != (0, 0) and c != far]
+            rnd.shuffle(leaves)
+            if leaves:
+                k = deg[leaves[0]][0]
                 opened.discard(k)
-                break
+                curtains.add(k)
+        else:
+            walls = sorted({_ekey(c, n) for c in cells for n in _nbrs(c) if n in cs} - opened)
+            walls = [k for k in walls if (0, 0) not in ((k[0], k[1]), (k[0] + (k[2] == 'x'), k[1] + (k[2] == 'y')))]
+            if walls:
+                curtains.add(rnd.choice(walls))
     return {'rect': (i0, i1, j0, j1), 'final': final, 'open_edges': opened, 'curtains': curtains}
 
 

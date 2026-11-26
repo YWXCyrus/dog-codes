@@ -136,16 +136,17 @@ class CellNav:
             self.turning = True
         if self.turning:
             return self._turn_cmd(err), {'dist': dist, 'err': err}
-        fd = self._blocked_ahead(ni, along)
-        if fd is not None:
-            return Cmd(), {'dist': dist, 'blocked': fd}
         v = c['cruise_vx'] if vx is None else vx
         if dist < 0.35:
             v = min(v, c['grid_vx_near'])
         wz = 0.0
         if c['walk_wz_max'] > 0:
             wz = max(-c['walk_wz_max'], min(c['walk_wz_max'], c['walk_wz_k'] * err))
-        return Cmd(v, wz), {'dist': dist, 'err': err}
+        info = {'dist': dist, 'err': err}
+        fd = self._blocked_ahead(ni, along)
+        if fd is not None:
+            info['blocked'] = fd                  # the caller decides: stop, or creep up to it
+        return Cmd(v, wz), info
 
     def _progress_fail(self, ni):
         """Walking forward for grid_prog_s with < grid_prog_m done."""
@@ -239,6 +240,8 @@ class CellNav:
                 self._set('PLAN', t)
         if self.phase == 'LOOK':
             return self._look(ni)
+        if self.phase == 'BACK':
+            return self._back(ni)
         if self.phase in ('CURTAIN_ALIGN', 'CURTAIN_ASK', 'CURTAIN_PUSH', 'CURTAIN_BACK', 'PROBE_ALIGN',
                           'PROBE_ASK'):
             return self._curtain(ni, cur)
@@ -284,8 +287,8 @@ class CellNav:
         special = None
         if m.is_stairs(nxt) and not m.is_stairs(cur):
             special = 'stairs'
-        elif e is not None and e.state == A.CURTAIN and not e.traversed:
-            special = 'curtain'
+        elif e is not None and (e.state == A.CURTAIN or e.was_curtain):
+            special = 'curtain'                   # every crossing of a curtain (also back through it) is a push
         yaw_d = A.DIR_YAW[d]
         turn_needed = abs(G.wrap(yaw_d - yaw)) > math.radians(30.0)
         off = math.hypot(x - cx, y - cy)
@@ -334,25 +337,40 @@ class CellNav:
         if 'blocked' in info:
             fd = info['blocked']
             x, y, yaw = ni.apose
+            dist_b = None
             if nxt is not None:
-                # the border to nxt within reach of the block: that border is (for now) impassable
-                bx, by = m.centre(cur)
-                bx, by = (bx + m.centre(nxt)[0]) / 2.0, (by + m.centre(nxt)[1]) / 2.0
+                bx = (m.centre(cur)[0] + m.centre(nxt)[0]) / 2.0
+                by = (m.centre(cur)[1] + m.centre(nxt)[1]) / 2.0
                 dist_b = (bx - x) * math.cos(yaw) + (by - y) * math.sin(yaw)
+            beyond = dist_b is None or fd > dist_b + 0.15
+            if beyond and fd > c['grid_obst_stop_m']:
+                # an obstacle INSIDE a cell (a prop, a cabinet), not on the border: creep up to it
+                cmd = Cmd(min(cmd.vx, c['grid_vx_near']), 0.0)
+            elif not beyond:
+                # the border itself is blocked: impassable for now, and evidence that it is a wall
                 e = m.edge_between(cur, nxt)
-                if dist_b <= fd + 0.30 and not e.traversed:
+                if not e.traversed:
                     e.mh += c['grid_block_evidence']
                     m._classify(e)
                 self._block(ni, cur, nxt, 'lane blocked %.2f m ahead' % fd)
+                return NavOut(Cmd(), '')
             else:
-                # obstacle in this cell before its centre (a prop): close enough counts as visited
-                cx, cy = m.centre(cur)
-                if math.hypot(x - cx, y - cy) <= c['visit_blocked_r_m'] and not m.visited(cur):
-                    m.force_visit(cur, t)
-                    self._ev(t, grid='%s visited from %.2f m (obstacle at the centre)' % (cur, math.hypot(x - cx, y - cy)))
-                self._set('PLAN', t)
-                self.plan_t = -1e9
-            return NavOut(Cmd(), '')
+                # stopped in front of an obstacle inside a cell: close enough counts as a visit
+                for cl in ([nxt] if nxt is not None else []) + [cur]:
+                    d = math.hypot(x - m.centre(cl)[0], y - m.centre(cl)[1])
+                    if not m.visited(cl) and d <= c['visit_blocked_r_m']:
+                        m.force_visit(cl, t)
+                        self.paused.add(cl)
+                        self._ev(t, grid='%s visited from %.2f m (obstacle in the cell)' % (cl, d))
+                if nxt is not None:
+                    m.cell(nxt).obstructed += 1           # twice: not planned through any more
+                    self._block(ni, cur, nxt, 'obstacle in %s' % (nxt,))
+                else:
+                    self.paused.add(cur)
+                    self._set('PLAN', t)
+                    self.plan_t = -1e9
+                self._start_back(ni, cur)
+                return NavOut(Cmd(), '')
         if cmd.vx > 0 and self._progress_fail(ni):
             self.prog.clear()
             if nxt is not None:
@@ -361,6 +379,39 @@ class CellNav:
                 return NavOut(Cmd(), '', hold='no_progress')
             return NavOut(Cmd(), '')
         return NavOut(cmd, '')
+
+    def _start_back(self, ni, cur):
+        """Off a cell centre in front of an obstacle: back straight to the centre of the cell the dog came
+        from (over the ground it just walked) - turning there would sweep the body into the obstacle /
+        the door posts. Only when that centre is straight behind; grid_back_max_m at most."""
+        c, m = self.c, self.m
+        if c['grid_back_max_m'] <= 0:
+            return
+        x, y, yaw = ni.apose
+        came = self.came_from.get(cur)
+        tgt = A.step(cur, came) if came else cur
+        tx, ty = m.centre(tgt)
+        if math.hypot(tx - x, ty - y) <= c['centre_tol_m']:
+            tgt = cur
+            tx, ty = m.centre(cur)
+        d = math.hypot(tx - x, ty - y)
+        if d <= c['centre_tol_m']:
+            return
+        back = G.wrap(math.atan2(ty - y, tx - x) - (yaw + math.pi))
+        if abs(back) > math.radians(25.0):
+            return
+        self._set('BACK', ni.t, tx=tx, ty=ty, d0=ni.travelled)
+        self._ev(ni.t, grid='backing %.2f m to %s' % (d, tgt))
+
+    def _back(self, ni):
+        c, s = self.c, self.sub
+        x, y, yaw = ni.apose
+        along = (s['tx'] - x) * math.cos(yaw + math.pi) + (s['ty'] - y) * math.sin(yaw + math.pi)
+        if along <= 0.05 or ni.travelled - s['d0'] >= c['grid_back_max_m'] or ni.t - s['t0'] > 10.0:
+            self._set('PLAN', ni.t)
+            self.plan_t = -1e9
+            return NavOut(Cmd(), '')
+        return NavOut(Cmd(-c['cur_retreat_vx'], 0.0), '', reverse_ok=True)
 
     def _block(self, ni, a, b, why):
         self.m.block(a, b, ni.t, self.c['grid_block_s'])
@@ -503,7 +554,8 @@ class CellNav:
             if cam:
                 e.result = 'camera_yes'
                 m._classify(e)
-            need_cam = s['probe'] or (c['cur_ask_camera'] and e.result != 'camera_yes' and e.cue < c['cur_cue_min'])
+            need_cam = s['probe'] or (c['cur_ask_camera'] and e.result not in ('camera_yes', 'passed')
+                                      and not e.traversed and e.cue < c['cur_cue_min'])
             if need_cam:
                 self._set('PROBE_ASK' if s['probe'] else 'CURTAIN_ASK', t, **{kk: s[kk] for kk in
                                                                           ('nxt', 'd', 'cur', 'k', 'probe')})

@@ -34,7 +34,9 @@ from rc import config  # noqa: E402
 
 RECORD_TOPICS = ['/livox/points', '/leg_odom', '/leg_odom2', '/odom', '/imu/data', '/joint_states',
                  '/nav_cmd_vel', '/cmd_vel', '/simple_cmd', '/tf_static', '/rc/status',
-                 '/fastlio/odometry', '/livox/lidar', '/livox/imu']     # FAST-LIO output + its raw inputs
+                 '/fastlio/odometry', '/livox/lidar', '/livox/imu',     # FAST-LIO output + its raw inputs
+                 '/rc/odom', '/quad/mission_status', '/quad/event', '/quad/vlm_ask', '/quad/vlm_answer',
+                 '/rc/detections']                                      # grid nav + perception
 CAMERA_TOPIC = '/camera/color/image_raw'
 FEED_LOST_EXIT_S = 5.0
 
@@ -144,6 +146,14 @@ def stop_lio(p):
 
 
 def fmt_status(t0, st):
+    if st.get('nav') == 'grid' and st.get('apos'):
+        a = st['apos']
+        mode = st['mode'] + (' ' + st['phase'] if st['phase'] else '')
+        return ('[%6.1fs] %-30s cell %-8s pos (%5.2f,%5.2f) %4.0fdeg  visited %2d/15%s  front %4.2f  tilt %4.1f  '
+                'odom %s  src %s  stairs %-6s%s' % (
+                    time.monotonic() - t0, mode, '(%d,%d)' % tuple(st['acell']), a[0], a[1], a[2], st['visited'],
+                    ' bounds' if st['bounds'] else '', st['front_m'], st['tilt'], 'ok' if st['odom_ok'] else 'BAD',
+                    st['src'], st['stairs'], ('  guard ' + ','.join(st['guard'])) if st['guard'] else ''))
     cell = 'cell (%d,%d) %s' % (st['cell'][0], st['cell'][1], st['dir'] or '-') if st['cell'] else 'cell -'
     mode = st['mode'] + (' ' + st['phase'] if st['phase'] else '')
     return '[%6.1fs] %-16s %-14s front %4.2f m  tilt %4.1f  floor %.2f  odom %s  lio %-3s  stairs %-6s  wall %s%s' % (
@@ -299,13 +309,20 @@ def main(argv=None):
                 st = out.status
                 ages = core.ages(t)
                 posture = core.posture
+                asks, core.pending_asks = core.pending_asks, []
+                apose = core.apose(t)
             io.send(out.cmd, out.codes)
+            io.publish_asks(asks)                     # camera questions to perception (never a motion)
+            io.publish_arena_odom(apose)              # /rc/odom: snapped arena pose for perception's positions
             for e in out.events:
                 e = dict(e, t=round(e.get('t', t) - t0, 2))      # core times are monotonic: make them run time
                 log(e)
-                if 'hold' in e:
+                if e.get('hold') == 'finish':
+                    print('\n*** FINISHED: stopped in the final cell %s - the dog stands. Drone launch is manual. ***\n'
+                          % (st.get('acell'),))
+                elif 'hold' in e:
                     print('\n*** HOLD: %s - the Captain may drive by controller; press Enter to resume ***\n' % e['hold'])
-                elif 'cell' not in e:
+                elif 'cell' not in e and 'arena_cell' not in e and 'vlm_answer' not in e:
                     print('event: %s' % json.dumps(e))
             if out.guard:
                 log({'guard': out.guard, 'cmd': [round(out.cmd.vx, 3), round(out.cmd.wz, 3)]})

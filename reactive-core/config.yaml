@@ -112,7 +112,7 @@ loc_jump_m: 0.30                     # an odometry step longer than this is a ju
 hyp_pen_slack: 0                     # placements this many penalty points worse than the best are dropped
 hyp_open_min: 40                     # an OPEN border into a cell outside a placement penalises it (rays needed)
 visit_r_m: 0.40                      # cell visited = base_link within this of its centre
-visit_blocked_r_m: 0.65              # ... or within this when an obstacle stands at the centre
+visit_blocked_r_m: 0.80              # ... or within this when an obstacle in the cell stops it (a prop)
 seen_min_n: 30                       # floor returns inside a cell -> 'seen' (viewer)
 # border evidence (heights above the stance floor). Panel: MID hit. Hanging curtain: MID pass + UP hit.
 edge_range_m: 3.0
@@ -177,11 +177,15 @@ grid_prog_m: 0.08                    # ... with less progress -> border blocked,
 grid_max_fails: 4                    # failures within 40 s -> HOLD no_progress
 grid_block_s: 25.0                   # a blocked border is avoided this long
 grid_block_evidence: 15.0            # WALL evidence added to a border the lane check found blocked
+grid_obst_stop_m: 0.45               # an obstacle inside a cell: creep up to this free distance, then count it visited
+grid_back_max_m: 0.80                # then back straight to the previous centre (over the ground just walked); 0 = off
+cur_detour: 3.0                      # a detected curtain is crossed once if its near side costs at most this (or nothing else is left); <0 = never
 cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)
 grid_fallback_s: 15.0                # no plan: reactive wall following this long, then plan again
 # curtain: border CURTAIN from the lidar (open below the hem, cloth above) or the camera
 curtain: push                        # off | detect | push
 cur_cue_min: 3.0                     # camera curtain detections pointing at a wall-like border -> CURTAIN
+cur_cue_angle_deg: 50.0              # ... only when the camera ray meets the border within this of square
 cur_ask_camera: true                 # lidar-only curtain: ask perception's camera first (no answer -> push)
 cur_vlm_wait_s: 8.0
 cur_probe: true                      # exploration done, arena cells unvisited behind a wall: ask the camera

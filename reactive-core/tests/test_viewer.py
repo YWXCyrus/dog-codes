@@ -42,7 +42,7 @@ def test_core_registry_serialises():
     s = build_registry(c).snapshot()
     json.dumps(s)
     names = [l['name'] for l in s['layers']]
-    assert names[:3] == ['grid', 'path', 'dog'] and all('error' not in l for l in s['layers'])
+    assert names[:4] == ['arena', 'grid', 'path', 'dog'] and all('error' not in l for l in s['layers'])
 
 
 def test_server_read_only():
@@ -54,7 +54,7 @@ def test_server_read_only():
         body = urllib.request.urlopen('http://127.0.0.1:%d/state.json' % port, timeout=3).read()
         assert json.loads(body)['layers'][0]['data'] == {'k': 1}
         page = urllib.request.urlopen('http://127.0.0.1:%d/' % port, timeout=3).read()
-        assert b'reactive-core map' in page
+        assert b'Arena live view' in page
         req = urllib.request.Request('http://127.0.0.1:%d/state.json' % port, data=b'x', method='POST')
         with pytest.raises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req, timeout=3)

@@ -97,6 +97,7 @@ class Cell:
     stairs: bool = False     # stairs in this cell (lidar stairs detector, camera, perception)
     stairs_src: str = ''
     labels: dict = field(default_factory=dict)   # perception: scene, survivor, hazard, object, qr
+    obstructed: int = 0      # times an obstacle inside it stopped the dog on the way through
 
 
 class ArenaMap:
@@ -408,23 +409,36 @@ class ArenaMap:
         return prev != st
 
     def add_curtain_cue(self, x, y, bearing_abs, t, dist_max=2.5):
-        """A persistent camera curtain detection along bearing_abs (arena yaw) from (x, y): the first
-        border it meets that is not OPEN gets a cue."""
+        """A persistent camera curtain detection along bearing_abs (arena yaw) from (x, y): the first border
+        the ray crosses that is not OPEN gets a cue - only if the ray meets it fairly square (within
+        cur_cue_angle_deg of its normal) and away from its ends (a grazing ray past a curtain's edge would
+        credit the panel next to it; sim 2026-11-26: a pushed wall)."""
         L = self.L
-        for d in np.arange(0.2, dist_max, 0.05):
-            px, py = x + d * math.cos(bearing_abs), y + d * math.sin(bearing_abs)
-            a = self.cell_of(x + (d - 0.05) * math.cos(bearing_abs), y + (d - 0.05) * math.sin(bearing_abs))
-            b = self.cell_of(px, py)
-            if a != b:
-                k = edge_key(a, b)
-                if k is None:
-                    continue
-                e = self.edge(k)
-                if e.state == OPEN or e.traversed:
-                    continue
-                e.cue += 1.0
-                self._classify(e)
-                return k
+        cb, sb = math.cos(bearing_abs), math.sin(bearing_abs)
+        prev = self.cell_of(x, y)
+        for d in np.arange(0.1, dist_max, 0.04):
+            b = self.cell_of(x + d * cb, y + d * sb)
+            if b == prev:
+                continue
+            a, prev = prev, b
+            k = edge_key(a, b)
+            if k is None:
+                return None                              # through a corner: ambiguous
+            e = self.edge(k)
+            if e.state == OPEN or e.traversed:
+                continue
+            i, j, ax = k
+            if ax == 'x':
+                along, centre, normal_c = y + d * sb, j * L, abs(cb)
+            else:
+                along, centre, normal_c = x + d * cb, i * L, abs(sb)
+            if abs(along - centre) > 0.5 * L - 0.20:
+                return None                              # near a post: could be either border
+            if normal_c < math.cos(math.radians(self.c['cur_cue_angle_deg'])):
+                return None                              # grazing
+            e.cue += 1.0
+            self._classify(e)
+            return k
         return None
 
     # ------------------------------------------------------------------ terrain / labels

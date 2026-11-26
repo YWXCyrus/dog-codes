@@ -55,6 +55,15 @@ class RosIO:
         n.create_subscription(Odometry, cfg['lio_topic'], self.on_lio, SENSOR_QOS)
         n.create_subscription(TFMessage, '/tf_static', self.on_tf_static, TF_STATIC_QOS)
         self.status_pub = n.create_publisher(String, '/rc/status', 10)
+        # perception (perception/README.md): task status, events, camera answers, camera-model detections
+        n.create_subscription(String, '/quad/mission_status', self.on_mission, 10)
+        n.create_subscription(String, '/quad/event', self.on_qevent, 50)
+        n.create_subscription(String, '/quad/vlm_answer', self.on_vlm_answer, 10)
+        n.create_subscription(String, cfg.get('detections_topic', '/rc/detections'), self.on_detections, 10)
+        self.ask_pub = n.create_publisher(String, '/quad/vlm_ask', 10)      # a question, never a motion
+        # the snapped arena pose for perception (launch it with odom_topic:=/rc/odom): positions to report
+        self.aodom_pub = n.create_publisher(Odometry, '/rc/odom', 10) if cfg.get('publish_arena_odom') else None
+        self._aprev = None
         self.cmd_pub = None
         self.simple_pub = None
         if publish:
@@ -119,6 +128,67 @@ class RosIO:
                     self.node.get_logger().info('mount from /tf_static: xyz (%.3f, %.3f, %.3f) pitch %.1f deg'
                                                 % (tr.x, tr.y, tr.z, math.degrees(G.pitch_from_quat(q.x, q.y, q.z, q.w))))
                 self.mount_from_tf = True
+
+    @staticmethod
+    def _json(m):
+        try:
+            v = json.loads(m.data)
+            return v if isinstance(v, dict) else None
+        except (ValueError, TypeError):
+            return None
+
+    def on_mission(self, m):
+        v = self._json(m)
+        if v is not None:
+            with self.lock:
+                self.core.on_mission_status(v, time.monotonic())
+
+    def on_qevent(self, m):
+        v = self._json(m)
+        if v is not None:
+            with self.lock:
+                self.core.on_quad_event(v, time.monotonic())
+
+    def on_vlm_answer(self, m):
+        v = self._json(m)
+        if v is not None:
+            with self.lock:
+                self.core.on_vlm_answer(v, time.monotonic())
+
+    def on_detections(self, m):
+        v = self._json(m)
+        if v is not None:
+            with self.lock:
+                self.core.on_detections(v.get('dets') or [], time.monotonic())
+
+    def publish_asks(self, asks):
+        for q in asks:
+            s = String()
+            s.data = json.dumps(q, separators=(',', ':'))
+            self.ask_pub.publish(s)
+
+    def publish_arena_odom(self, apose):
+        """nav_msgs/Odometry in frame 'arena' (booklet frame), with the speed perception's scene trigger uses."""
+        if self.aodom_pub is None or apose is None:
+            return
+        now = time.monotonic()
+        o = Odometry()
+        o.header.stamp = self.node.get_clock().now().to_msg()
+        o.header.frame_id = 'arena'
+        o.child_frame_id = 'base_link'
+        o.pose.pose.position.x, o.pose.pose.position.y = float(apose[0]), float(apose[1])
+        o.pose.pose.orientation.z = math.sin(apose[2] / 2.0)
+        o.pose.pose.orientation.w = math.cos(apose[2] / 2.0)
+        if self._aprev is not None and now - self._aprev[0] > 1e-3:
+            dt = now - self._aprev[0]
+            vx = (apose[0] - self._aprev[1][0]) / dt
+            vy = (apose[1] - self._aprev[1][1]) / dt
+            c, s = math.cos(apose[2]), math.sin(apose[2])
+            o.twist.twist.linear.x = c * vx + s * vy
+            o.twist.twist.linear.y = -s * vx + c * vy
+            o.twist.twist.angular.z = G.wrap(apose[2] - self._aprev[1][2]) / dt
+        self._aprev = (now, apose)
+        self.aodom_pub.publish(o)
 
     # ---- outputs (main thread) ----
     def _simple(self, code, value=0):

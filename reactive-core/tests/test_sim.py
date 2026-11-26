@@ -10,7 +10,7 @@ from sim import world as W
 from sim.harness import simulate
 from sim.lidar import Lidar
 
-CFG = config.load()
+CFG = config.load(overrides=['nav_mode=wall'])          # the reactive wall-following mode (grid mode: test_grid_sim.py)
 
 
 def names(res):
@@ -130,7 +130,7 @@ def test_stairs_with_frozen_leg_odom():
 
 
 def test_detect_mode_never_climbs():
-    cfg = config.load(overrides=['stairs=detect'])
+    cfg = config.load(overrides=['stairs=detect', 'nav_mode=wall'])
     r = simulate(W.stairs_world(), cfg, T=40.0)
     assert 'enter_ai' not in names(r)
     assert any('stairs_seen' in e for e in r.events)

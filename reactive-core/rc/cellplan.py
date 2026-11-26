@@ -98,6 +98,8 @@ class CellPlanner:
                     continue
                 if not self.enterable(nb, final_phase):
                     continue
+                if nb in m.cells and m.cells[nb].obstructed >= 2:
+                    continue                                   # an obstacle fills it: not a way through
                 extra = self.move_cost(cell, nb, t)
                 if extra is None:
                     continue
@@ -150,6 +152,9 @@ class CellPlanner:
             return self.plan_final(start, start_dir, t)
         best, prev = self.search(start, start_dir, t)
         T = self.targets(best)
+        cp = self.plan_curtain(start, start_dir, t, best, prev, T)
+        if cp is not None:
+            return cp
         if not T:
             pr = self.plan_probe(start, start_dir, t, best, prev)
             if pr is not None:
@@ -163,15 +168,31 @@ class CellPlanner:
             likely = [g for g in T if m.weight(g) >= 0.5] or T
             dmat = {g: self._dists_from(g, t) for g in set(likely) | set(T)}
 
+            def dd(a, b):
+                return dmat[a].get(b, 50.0)
+
             def tour(g):
+                """Open tour from g over the other likely targets: nearest neighbour + 2-opt."""
                 left = set(likely) - {g}
-                cur, tot = g, 0.0
+                order = [g]
                 while left:
-                    nxt = min(left, key=lambda x: dmat[cur].get(x, 50.0))
-                    tot += dmat[cur].get(nxt, 50.0)
+                    nxt = min(left, key=lambda x: dd(order[-1], x))
+                    order.append(nxt)
                     left.discard(nxt)
-                    cur = nxt
-                return tot
+                improved = True
+                while improved and len(order) > 3:
+                    improved = False
+                    for i in range(1, len(order) - 1):
+                        for j in range(i + 1, len(order)):
+                            a, b = order[i - 1], order[i]
+                            cc = order[j]
+                            dn = order[j + 1] if j + 1 < len(order) else None
+                            old = dd(a, b) + (dd(cc, dn) if dn else 0.0)
+                            new = dd(a, cc) + (dd(b, dn) if dn else 0.0)
+                            if new < old - 1e-9:
+                                order[i:j + 1] = reversed(order[i:j + 1])
+                                improved = True
+                return sum(dd(p, q) for p, q in zip(order, order[1:]))
 
             g = min(T, key=lambda x: (best[x][0] + c['plan_tour_weight'] * tour(x), best[x][0]))
         path = self._path(prev, best, start, start_dir, g)
@@ -183,6 +204,32 @@ class CellPlanner:
             return None
         return Plan(goal=goal, path=self._path(prev, best, start, start_dir, goal), reason='explore',
                     cost=best[goal][0])
+
+    def plan_curtain(self, start, start_dir, t, best, prev, T):
+        """A detected curtain not passed yet is worth crossing once (booklet G: 15 points), even with a way
+        round it: when its near side costs at most cur_detour, or nothing else is left to explore."""
+        c, m = self.c, self.m
+        if c['curtain'] != 'push' or c['cur_detour'] < 0:
+            return None
+        cands = []
+        for k, e in m.edges.items():
+            if e.state != A.CURTAIN or e.traversed or e.result in ('rigid', 'camera_no', 'passed'):
+                continue
+            if t < e.blocked_until:
+                continue
+            a, b = A.edge_cells(k)
+            for v, u in ((a, b), (b, a)):
+                if v in best and self.enterable(u, False) and not m.is_stairs(u):
+                    cands.append((best[v][0], v, u, k))
+        if not cands:
+            return None
+        cands.sort()
+        d, v, u, k = cands[0]
+        if d > c['cur_detour'] and T:
+            return None
+        path = self._path(prev, best, start, start_dir, v) + [u]
+        return Plan(goal=u, path=path, reason='curtain', cost=d + 1.0 + c['plan_curtain_cost'], probe_edge=k,
+                    targets=len(T))
 
     def plan_final(self, start, start_dir, t):
         m = self.m

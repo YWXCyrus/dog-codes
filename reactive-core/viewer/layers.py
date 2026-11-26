@@ -7,7 +7,7 @@ Coordinates: grid metres, +x right of the start heading, +y along it (same as th
 import time
 import traceback
 
-TYPES = ('cells', 'points', 'path', 'markers', 'text')
+TYPES = ('cells', 'points', 'path', 'markers', 'text', 'arena')
 
 
 class Registry:
@@ -76,10 +76,41 @@ def build_registry(core):
         return [{'x': round(p[0] + s.edge_x * math.sin(a), 2), 'y': round(p[1] + s.edge_x * math.cos(a), 2),
                  'yaw': round(a, 3), 'label': s.kind}]
 
+    def arena():
+        """Everything the arena view draws, in the booklet frame (+X start heading, +Y left, metres)."""
+        import math
+        t = time.monotonic()
+        ap = core.apose(t)
+        nav = core.driver.nav
+        obs = []
+        if ap is not None and core.scan.obs.shape[0]:
+            from rc import geometry as G
+            w = G.body_to_world(core.scan.obs[:500], ap)
+            obs = [[round(float(p[0]), 2), round(float(p[1]), 2)] for p in w]
+        st = core.status(t)
+        ev = [e for e in core.qevents[-6:]]
+        return {
+            'map': core.amap.snapshot(t),
+            'dog': None if ap is None else {'x': round(ap[0], 3), 'y': round(ap[1], 3), 'yaw': round(ap[2], 4)},
+            'trail': [list(p) for p in core.apath[-1500:]],
+            'plan': nav.snapshot() if nav is not None else None,
+            'obstacles': obs,
+            'status': {k: st.get(k) for k in ('mode', 'phase', 'hold', 'acell', 'apos', 'front_m', 'tilt', 'odom_ok',
+                                              'lio', 'src', 'stairs', 'elapsed', 'visited', 'bounds', 'guard', 'nav')},
+            'loc': core.loc.status(),
+            'mission': core.mission,
+            'events': ev,
+            'stairs': None if (ap is None or core.stairs.kind == 'none' or core.stairs.edge_x == float('inf')) else {
+                'kind': core.stairs.kind,
+                'x': round(ap[0] + core.stairs.edge_x * math.cos(ap[2] + core.stairs.heading), 2),
+                'y': round(ap[1] + core.stairs.edge_x * math.sin(ap[2] + core.stairs.heading), 2)},
+        }
+
+    r.layer('arena', 'arena', arena)
     r.layer('grid', 'cells', cells, {'visited': '#4c8bf5', 'start': '#2ca02c', 'current': '#ffb000',
-                                     'dead': '#d62728'})
-    r.layer('path', 'path', path, {'color': '#888888'})
-    r.layer('dog', 'markers', dog, {'color': '#ff6a00'})
+                                     'dead': '#d62728'}, default_on=core.c.get('nav_mode') != 'grid')
+    r.layer('path', 'path', path, {'color': '#888888'}, default_on=core.c.get('nav_mode') != 'grid')
+    r.layer('dog', 'markers', dog, {'color': '#ff6a00'}, default_on=core.c.get('nav_mode') != 'grid')
     r.layer('obstacles', 'points', core.obstacles_grid, {'color': '#d62728'}, default_on=False)
     r.layer('stairs', 'markers', stairs, {'color': '#9467bd'}, default_on=False)
     r.layer('status', 'text', status, default_on=False)

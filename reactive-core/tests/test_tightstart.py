@@ -22,7 +22,7 @@ def bay_world(offset):
 
 def test_off_centre_start_walks_out():
     for side in ('left', 'right'):
-        r = simulate(bay_world(0.15), config.load(overrides=['wall_side=' + side]), T=20.0)
+        r = simulate(bay_world(0.15), config.load(overrides=['wall_side=' + side, 'nav_mode=wall']), T=20.0)
         assert r.startup == 'ready'
         assert r.collisions == 0 and not r.reversed
         assert r.end_pose[0] > 1.0                  # out of the bay
@@ -31,5 +31,5 @@ def test_off_centre_start_walks_out():
 def test_off_centre_start_old_lane_width_without_fallback():
     # until bd6e0ed this collided (turning on the spot in the bay); with the short-term memory
     # replaced by the FAST-LIO map (2026-11-23) the ghost cells are gone and it walks out too
-    r = simulate(bay_world(0.15), config.load(overrides=['lane_w=0.70', 'lane_w_min=0.70']), T=15.0)
+    r = simulate(bay_world(0.15), config.load(overrides=['lane_w=0.70', 'lane_w_min=0.70', 'nav_mode=wall']), T=15.0)
     assert r.collisions == 0 and r.end_pose[0] > 1.0
