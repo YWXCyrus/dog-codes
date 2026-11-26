@@ -300,7 +300,9 @@ def main(argv=None):
                 st = out.status
                 ages = core.ages(t)
                 posture = core.posture
+                apose = core.arena_pose()
             io.send(out.cmd, out.codes)
+            io.publish_arena(apose)
             for e in out.events:
                 e = dict(e, t=round(e.get('t', t) - t0, 2))      # core times are monotonic: make them run time
                 log(e)

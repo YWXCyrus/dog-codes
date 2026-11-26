@@ -56,6 +56,10 @@ class RosIO:
         n.create_subscription(TFMessage, '/tf_static', self.on_tf_static, TF_STATIC_QOS)
         n.create_subscription(String, cfg['detections_topic'], self.on_detections, 10)   # rc/vision_node.py
         self.status_pub = n.create_publisher(String, '/rc/status', 10)
+        # nav_mode cells: position in the arena frame (booklet E) for perception (odom_topic:=/rc/arena_odom)
+        # and perception's scene results (a room look ends when its cell has been analysed)
+        self.arena_pub = n.create_publisher(Odometry, '/rc/arena_odom', 10)
+        n.create_subscription(String, '/quad/scene_state', self.on_scene_state, 10)
         self.cmd_pub = None
         self.simple_pub = None
         if publish:
@@ -167,6 +171,31 @@ class RosIO:
         while time.monotonic() < end:
             self.send(Cmd())
             time.sleep(1.0 / rate)
+
+    def on_scene_state(self, m):
+        try:
+            cell = json.loads(m.data).get('cell')
+        except Exception:
+            return
+        if isinstance(cell, (list, tuple)) and len(cell) == 2:
+            with self.lock:
+                self.core.on_scene_state(cell, time.monotonic())
+
+    def publish_arena(self, pose):
+        """pose = (x, y, yaw, speed) arena frame (core.arena_pose()); information only, also in dry runs."""
+        if pose is None:
+            return
+        x, y, yaw, v = pose
+        m = Odometry()
+        m.header.stamp = self.node.get_clock().now().to_msg()
+        m.header.frame_id = 'arena'
+        m.child_frame_id = 'base_link'
+        m.pose.pose.position.x = float(x)
+        m.pose.pose.position.y = float(y)
+        m.pose.pose.orientation.z = math.sin(yaw / 2.0)
+        m.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        m.twist.twist.linear.x = float(v)
+        self.arena_pub.publish(m)
 
     def publish_status(self, status):
         m = String()

@@ -267,3 +267,49 @@ NOT done: feeding Nav2 the planner's live grid as an OccupancyGrid and sending i
 
 Switches for a first careful test: `--set curtain=detect --set bar=detect` (events only, no crossing).
 
+
+## 9. 2026-11-26 (branch `testing2`): nav_mode cells - cell map, lattice localisation, room looks
+
+Opt-in: `--set nav_mode=cells` (default stays `planner`). Code: `rc/cells.py` (driving), `rc/cellmap.py`
+(cell map, arena bounds, lattice localisation). Booklet v6.4: arena 3 x 5 cells + 1 final cell, cell
+centres 1.02 m apart, walls on the cell boundaries, report frame = start cell centre, +x start heading,
++y left. **Place the dog at the centre of the start cell, square to the walls.**
+
+- **Localisation:** leg odometry + gyro, the yaw drift taken out with the wall directions, the position
+  corrected by every straight wall line in view (walls must lie on the 1.02 m grid). Sim (odometry 5-10 %
+  long, gyro drift): error <= ~0.2 m (raw odometry 0.8-2.4 m). Published as `/rc/arena_odom`
+  (nav_msgs/Odometry, frame `arena`) - also in a dry run.
+- **Map by cell:** the dog stops at the centre of every new cell and notes its 4 sides (wall / open).
+  It goes to an unvisited neighbour, else the nearest cell still to see (path through visited cells),
+  else HOLD `explored`. The 3 x 5 size bounds where it may go (it never leaves through the final cell's
+  open side). Every decision is an event in `decisions.jsonl`: `cells`, `cell`, `sides` (+x +y -x -y:
+  o open / w wall / ? unknown), `arena`.
+- **Finish (final cell):** when the 3 x 5 is explored the dog names the final cell only when it is sure -
+  (1) a visited cell that every possible 3 x 5 placement leaves outside, else (2) an unvisited cell outside
+  the arena behind an open side through which the lidar saw >= 1.8 m (the final cell has no far wall) -
+  walks there through known cells, stops at its centre (all four legs inside) and HOLDs `finished`
+  (event `cells: finished`, `cell`, `pos`). Not sure -> HOLD `explored` where it is. A second cell
+  outside the arena on the way -> HOLD `overshoot` (never out into the drone field).
+  Off: `--set cells_finish=false`.
+- **Rooms (scenes):** a neighbour cell with walls on its other three sides is looked at from the doorway:
+  the dog turns to face it and stands still until perception reports a scene query for that cell
+  (`/quad/scene_state`), at most `cells_look_max_s` (7 s); event `cells: room` with `room` / `pos`.
+  Perception must take its position from us:
+
+```bash
+# terminal 2:
+cd ~/dog-codes/reactive-core && python3 run.py --live --set nav_mode=cells
+# terminal 3, after run.py printed "Ready":
+ros2 launch ~/dog-codes/perception/perception.launch.py odom_topic:=/rc/arena_odom
+```
+
+**First check (no autonomy): dry run + joystick.** `python3 run.py --set nav_mode=cells` (dry run, press
+Enter at Ready), drive the dog through a few cells by hand and watch
+`ros2 topic echo /rc/arena_odom --field pose.pose.position`: x / y must step by ~1.02 per cell
+(+x = the start heading, +y = left) and come back to ~0 at the start cell.
+
+Parameters (`config.yaml`, `cells_*`): `cells_wall_half_t` (half the real wall thickness, 0.01),
+`cells_snap` (false = no lattice correction), `cells_rooms` (false = no room looks), `cells_look_max_s`.
+Tests: `tests/test_cellmap.py`; sim: `python tools/nav_eval.py --quick` (corridors, 6 booklet arenas,
+open arena, stairs: 1 seed, ~15 min on 14 cores), `python tools/room_eval.py` (room looks with a fake
+perception: is the reported cell the true one).

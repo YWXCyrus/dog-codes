@@ -17,6 +17,7 @@ from rc import geometry as G
 from rc.bar import BarResult
 from rc.config import mode as cfg_mode
 from rc.curtain import CurtainResult
+from rc.cells import CellNav
 from rc.guard import Cmd
 from rc.stairs import StairsResult
 
@@ -43,6 +44,9 @@ class DriverInput:
     hint_yaw: float = None              # frontier planner: yaw (odom frame) to head for; None = no advice
     bar: BarResult = field(default_factory=BarResult)
     curtain: CurtainResult = field(default_factory=CurtainResult)
+    drops: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))   # drop cells (body frame), nav_mode cells
+    walls: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))   # wall-height points (body xy), lattice snap
+    scene_seen: dict = field(default_factory=dict)      # arena cell -> time perception last analysed it
 
 
 @dataclass
@@ -99,6 +103,8 @@ class Driver:
         self.curtain_s = {}
         self.curtain_cool_until = -1e9
         self.curtain_seen_t = -1e9
+        # nav_mode cells (rc/cells.py): replaces lanes + wall following + the no-progress check
+        self.cells = CellNav(cfg, self) if cfg_mode(cfg, 'nav_mode') == 'cells' else None
 
     # ---------------------------------------------------------------- helpers
     def _dist(self, di):
@@ -265,6 +271,9 @@ class Driver:
         if self.mode not in (BAR, CURTAIN):
             self.front_ignore_x = 0.0
 
+        if self.cells is not None and self.mode in (HOLD, STAIRS, BAR, CURTAIN):
+            self.cells.track(di)                # the position follows the dog whoever drives it
+
         if self.mode == HOLD:
             return self._out(Cmd())
 
@@ -296,6 +305,8 @@ class Driver:
         cmd = self._obstacle_triggers(di)
         if cmd is not None:
             return self._out(cmd)
+        if self.cells is not None:
+            return self._out(self.cells.step(di, dyaw))
 
         if self._progress(di):
             cell = self.grid.current

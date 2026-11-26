@@ -48,6 +48,7 @@ class Core:
         self.stairs_det = StairDetector(cfg)
         self.odom = LegOdom(cfg)
         self.lio = LioMap(cfg)                     # FAST-LIO-placed local map (replaces the old memory)
+        self.scene_seen = {}                       # arena cell -> time (/quad/scene_state)
         self.det_map = ObstacleDetector(cfg)       # obstacle rule on live scan + map points
         self.map_extra = np.zeros((0, 2))          # map obstacle + drop cells (body frame) for the lanes
         self.grid = Grid(cfg['cell_m'])
@@ -130,6 +131,15 @@ class Core:
             self.map_extra = np.zeros((0, 2))
             self.pending_events.append({'t': round(t, 2), 'lio_bad': bad + ' - map off, live scan only'})
 
+    def on_scene_state(self, cell, t):
+        """Perception analysed the arena cell `cell` (/quad/scene_state): a room look can end."""
+        self.scene_seen[(int(cell[0]), int(cell[1]))] = t
+
+    def arena_pose(self):
+        """nav_mode cells: (x, y, yaw, speed) in the arena frame (booklet E), else None."""
+        nav = self.driver.cells
+        return None if nav is None else nav.arena_pose
+
     def on_vision(self, dets, t):
         """Camera detections from rc/vision_node.py: [{'cls': 'curtain', 'conf': 0.9, 'bearing': 0.1}, ...]."""
         self.vision.on_detections(dets, t)
@@ -167,6 +177,18 @@ class Core:
 
     def feeds_ok(self, t, max_age=0.5):
         return {k: a <= max_age for k, a in self.ages(t).items()}
+
+    def _wall_pts(self):
+        """nav_mode cells: live-scan points at wall height (body xy) for the lattice snap."""
+        p = self.scan.pts
+        if self.driver.cells is None or p.shape[0] == 0:
+            return np.zeros((0, 2))
+        lo, hi = self.c['cells_wall_h']
+        h = p[:, 2] - self.scan.floor_z
+        w = p[(h > lo) & (h < hi), :2]
+        r = np.hypot(w[:, 0], w[:, 1])
+        w = w[(r > 0.3) & (r < 2.5)]
+        return w[::max(1, w.shape[0] // 1500)]
 
     def dist_from_start(self):
         if self.start_pose is None or self.odom.pose is None:
@@ -250,7 +272,8 @@ class Core:
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
                              last_cmd=self.last_cmd, dist_from_start=self.dist_from_start(),
-                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']))
+                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
+                             drops=self.scan.drops, walls=self._wall_pts(), scene_seen=self.scene_seen)
             out = self.driver.step(di)
             self.drive_out = out
             self.drive_cmd = out.cmd
