@@ -5,7 +5,8 @@ config/params.yaml - one copy of the perception code for both cores. Nothing her
 perception only publishes motion in mode QR_APPROACH (set by the frontier supervisor, which is
 not started here), and that goes to /quad/cmd_vel, which reactive-core does not listen to.
 
-  # after reactive-core's run.py printed "Ready" (its fresh FAST-LIO feeds /odom via the bring-up):
+  # after reactive-core's run.py printed "Ready" (grid mode publishes the snapped arena pose /rc/odom and,
+  # during a scene look from the doorway, /rc/look_cell - the cell perception then reports results in):
   ros2 launch ~/dog-codes/perception/perception.launch.py
   # test without sending anything to the scoring server:
   ros2 launch ~/dog-codes/perception/perception.launch.py dry_run:=true
@@ -55,7 +56,8 @@ def generate_launch_description():
                               description='false: no scene-server queries (objects/survivors/rooms)'),
         DeclareLaunchArgument('start_mode', default_value='EXPLORE',
                               description='no frontier supervisor: EXPLORE enables the scene queries'),
-        DeclareLaunchArgument('odom_topic', default_value='/odom'),
+        DeclareLaunchArgument('odom_topic', default_value='/rc/odom',
+                              description="reactive-core's snapped arena pose (booklet frame) - the reported positions"),
         DeclareLaunchArgument('image_topic', default_value='/camera/color/image_raw'),
         LogInfo(msg=['perception standalone: code ', CODE, ', group ', LC('group_id'),
                      ', dry_run ', LC('dry_run')]),

@@ -189,7 +189,24 @@ grid_back_max_m: 0.80               # then back straight to the previous centre 
 grid_back_vx: 0.12                   # (0.08 did not move the real dog, live 2026-11-26)
 body_x_m: 0.35                       # grid lanes ignore points inside the dog's outline (+-this along x from base_link) ...
 body_y_m: 0.24                       # ... and +-this across (its own legs)
-grid_back_give_up_s: 2.5             # not moving backwards after this: give up backing, plan on
+grid_back_give_up_s: 2.5             # the guard passed a reverse this long and the dog did not move: no more reversing this run
+grid_reverse: true                   # branch integrated: a target straight behind over walked ground is reached backwards
+grid_reverse_max_m: 1.10             # ... (this cell's centre, or the previous cell's when the plan goes back) up to this far
+grid_reverse_cone_deg: 20.0          # ... only when it lies within this of straight behind; else turn round
+tilt_turn_deg: 10.0                  # no on-the-spot turn while the tilt stays above this ... (falls: turning pitched 14-17 deg on a slab)
+tilt_turn_window_s: 1.0              # ... for this long (a turn's own wobble reached 6.3 deg, run 073255)
+tilt_turn_hold_s: 5.0                # waiting for level ground longer than this -> HOLD tilted_turn
+# scene rooms (branch integrated): a cell with WALL on its three other sides is looked at from the doorway, never entered
+scene_look: true                     # false = drive into them as before
+scene_prop_h_lo: 0.25                # props inside the cell: returns this high above the floor (above rubble 0.22) ...
+scene_prop_h_hi: 1.20
+scene_prop_min: 40                   # ... at least this many -> 'scene' (front + side looks), else 'dead_end' (front look only)
+scene_look_s: 3.0                    # front look: at least this long ...
+scene_look_max_s: 8.0                # ... until perception's /quad/scene_state names the cell, at most this long
+scene_side_deg: 45.0                 # side looks for the QR (nearer half of a side wall, booklet v6.4 FAQ 4)
+scene_side_s: 3.0
+scene_max_s: 45.0                    # the whole look, at most
+look_cell_topic: /rc/look_cell       # out: the cell looked at (perception uses it for the scene / QR / survivor cell)
 cur_last: true                       # curtains only after every cell reachable without one is visited (then cells behind + the 15 points, then the final cell)
 cur_detour: 3.0                      # a detected curtain is crossed once if its near side costs at most this (or nothing else is left); <0 = never
 cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)
@@ -209,7 +226,7 @@ cur_clear_m: 0.45                    # passed when base_link is this far beyond 
 cur_nose_m: 0.30                     # base_link -> nose
 cur_stall_m: 0.04                    # touch test: less progress than this ...
 cur_stall_s: 2.0                     # ... in this long while pushing = rigid (a wall)
-cur_retreat_m: 0.15                  # after 'rigid': back off this far (the ONLY reverse; 0 = off)
+cur_retreat_m: 0.15                  # after 'rigid': back off this far (0 = off)
 cur_retreat_vx: 0.08
 cur_max_s: 30.0
 curtain_hold_err_deg: 15

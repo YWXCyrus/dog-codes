@@ -58,6 +58,19 @@ Grid-mode keys to know (all in `config.yaml`, `--set key=value`):
 | `snap` | true | grid snap on/off; `snap_z_lo..hi` 0.18-0.40 = panel heights used |
 | `pose_src` | leg | `lio` = FAST-LIO body steps (falls back to leg) |
 
+### 0b. Branch `integrated` (2026-11-26): `grid-nav` + ideas from `testing2`
+
+`grid-nav` plus four changes (nothing of `testing2`'s code: its cells navigator, frontier planner and bar
+stay out). Tests: `tests/test_integrated.py`, `perception/test_cues.py` (no simulator run for these).
+
+| change | what the dog does | keys |
+|---|---|---|
+| scene rooms | a cell with WALL on its other three sides is **never entered**. From the centre of the cell in front: face it until perception's `/quad/scene_state` names the cell (3-8 s), then 45 deg left and right (3 s each: the QR on the nearer half of a side wall, booklet v6.4 FAQ 4), square up. Props inside (lidar 0.25-1.2 m high) = `scene`, none = `dead_end` (front look only). Then the cell counts as visited, its doorway closed for the planner. Seen late (dog past the centre / over the doorway): it backs out first. Events `scene`, `scene_done` | `scene_look`, `scene_prop_*`, `scene_look_s`, `scene_look_max_s`, `scene_side_deg`, `scene_side_s` |
+| reversing | when the plan goes back the way the dog came (nothing new ahead), it walks backwards to the previous cell's centre over the ground just walked, then turns there; a centre behind the dog is also reached backwards. If the guard passed the reverse for 2.5 s and the dog did not move (live 071529), reversing stops for the run and it turns round instead. Guard stops for stale feeds do not count | `grid_reverse`, `grid_reverse_max_m`, `grid_reverse_cone_deg`, `grid_back_vx`, `grid_back_give_up_s` |
+| tilt | no on-the-spot turn while the tilt stays above 10 deg for 1 s: it waits; HOLD `tilted_turn` after 5 s (Enter resumes) | `tilt_turn_deg`, `tilt_turn_window_s`, `tilt_turn_hold_s` |
+| nav_mode | anything but `grid` / `wall` is refused at start (072444 ran `nav_mode=cells` on grid-nav: silent wall following) | |
+| perception | `/rc/look_cell` (JSON `{cell, pos, look, kind}`) while looking at a scene: `frontier-fastlio/dog_codes/perception.py` takes the scene query, QR, survivor and hazard cell from it (its own guess, 1 m ahead of the dog, lands in the doorway cell or beside the scene). `perception.launch.py` now defaults to `odom_topic:=/rc/odom` | `look_cell_topic` |
+
 ## 1. Run it on the dog
 
 ```bash

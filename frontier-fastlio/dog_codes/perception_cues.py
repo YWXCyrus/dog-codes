@@ -7,9 +7,31 @@
 * mission_status: which tasks are reported, which are open, and a suggestion where to go next, so the
   navigation can keep exploring / backtrack until the tasks are done (booklet v6.3: 12 min per session,
   the exit is beyond the stairs).
+* parse_look / fresh_look: reactive-core's /rc/look_cell (the arena cell the dog is looking at from its
+  doorway) -> the cell to put scene / QR / survivor / hazard results in while it is fresh.
 """
 import collections
+import json
 import math
+
+
+def parse_look(data, t):
+    """/rc/look_cell JSON {'cell': [i, j], 'look': k, ...} -> (cell, k, t) or None."""
+    try:
+        v = json.loads(data)
+        cell = tuple(int(c) for c in v['cell'])
+        if len(cell) != 2:
+            return None
+        return cell, int(v.get('look', 0)), float(t)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def fresh_look(look, now, max_age_s):
+    """The look (cell, k, t) if it is at most max_age_s old, else None."""
+    if look is None or now - look[2] > max_age_s:
+        return None
+    return look
 
 STAIRS_WORDS = ('stair', 'staircase', 'stairway', 'steps going up', 'flight of steps', 'step ladder',
                 'checker plate steps', 'handrail')

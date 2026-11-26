@@ -61,6 +61,9 @@ class RosIO:
         n.create_subscription(String, '/quad/vlm_answer', self.on_vlm_answer, 10)
         n.create_subscription(String, cfg.get('detections_topic', '/rc/detections'), self.on_detections, 10)
         self.ask_pub = n.create_publisher(String, '/quad/vlm_ask', 10)      # a question, never a motion
+        # scene look from the doorway (rc/cellnav.py SCENE): perception's answer per cell in, the cell looked at out
+        n.create_subscription(String, '/quad/scene_state', self.on_scene_state, 10)
+        self.look_pub = n.create_publisher(String, cfg.get('look_cell_topic', '/rc/look_cell'), 10)
         # the snapped arena pose for perception (launch it with odom_topic:=/rc/odom): positions to report
         self.aodom_pub = n.create_publisher(Odometry, '/rc/odom', 10) if cfg.get('publish_arena_odom') else None
         self._aprev = None
@@ -161,11 +164,26 @@ class RosIO:
             with self.lock:
                 self.core.on_detections(v.get('dets') or [], time.monotonic())
 
+    def on_scene_state(self, m):
+        v = self._json(m)
+        if v is not None:
+            with self.lock:
+                self.core.on_scene_state(v, time.monotonic())
+
     def publish_asks(self, asks):
         for q in asks:
             s = String()
             s.data = json.dumps(q, separators=(',', ':'))
             self.ask_pub.publish(s)
+
+    def publish_look(self, look):
+        """/rc/look_cell (JSON {cell, pos, look, kind}): the arena cell the dog is looking at from its doorway.
+        Perception takes the scene / QR / survivor / hazard cell from it while it is fresh. Never a motion."""
+        if look is None:
+            return
+        s = String()
+        s.data = json.dumps(look, separators=(',', ':'))
+        self.look_pub.publish(s)
 
     def publish_arena_odom(self, apose):
         """nav_msgs/Odometry in frame 'arena' (booklet frame), with the speed perception's scene trigger uses."""

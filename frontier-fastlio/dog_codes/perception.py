@@ -66,6 +66,10 @@ class Perception(Node):
             'detections_topic': '/rc/detections', 'stairs_conf': 0.5, 'stairs_persist': 3,
             'stairs_window_s': 1.5, 'stairs_event_gap_s': 1.0, 'human_conf': 0.5, 'human_persist': 3,
             'human_query': True, 'status_hz': 1.0,
+            # reactive-core grid mode: the cell the dog looks at from a scene's doorway (it never enters).
+            # While fresh it is THE cell for scene queries, the QR, survivors and hazards (the view point
+            # 1 m ahead lands in the doorway cell or beside the scene on the side looks)
+            'look_cell_topic': '/rc/look_cell', 'look_cell_max_age_s': 1.5,
         })
         self.p = p
         self.stairs_cue = PC.DetectionPersist('stairs', p['stairs_conf'], p['stairs_persist'], p['stairs_window_s'])
@@ -109,6 +113,7 @@ class Perception(Node):
         self.vlm_pending = None
         self.fail_n = 0
         self.last_report_t = {}
+        self.look = None           # (cell, k, t) from /rc/look_cell
 
         grp = p['group_id'][:7] if p['scene_group_short'] else p['group_id']
         self.client = SC.SceneClient(p['scene_server'], grp, p['scene_path'], p['scene_image_field'],
@@ -128,6 +133,7 @@ class Perception(Node):
         self.create_subscription(String, C.T_MODE, lambda m: setattr(self, 'mode', m.data), 10)
         self.create_subscription(String, '/quad/vlm_ask', self.on_ask, 10)
         self.create_subscription(String, p['detections_topic'], self.on_detections, 10)
+        self.create_subscription(String, p['look_cell_topic'], self.on_look, 10)
         self.status_pub = self.create_publisher(String, '/quad/mission_status', 10)
         self.create_timer(1.0 / max(0.1, p['status_hz']), self.publish_status)
         self.create_timer(0.1, self.tick)
@@ -181,6 +187,15 @@ class Perception(Node):
             return
         self.img_t = time.monotonic()
         self.img_pose = (self.px, self.py, self.yaw)
+
+    def on_look(self, msg):
+        lk = PC.parse_look(msg.data, time.monotonic())
+        if lk is not None:
+            self.look = lk
+
+    def look_now(self):
+        """(cell, k, t) while reactive-core looks at a scene from its doorway, else None."""
+        return PC.fresh_look(self.look, time.monotonic(), self.p['look_cell_max_age_s'])
 
     # ------------------------------------------------------------ helpers
     def range_along(self, world_angle, cone=0.09, lo=0.15, hi=1.6):
@@ -282,11 +297,13 @@ class Perception(Node):
                 self.get_logger().warn('QR decoded: %r' % text)
             self.qr_text = text
             self.qr_seen = None
-            self.qr_cell = C.cell_of(pose[0], pose[1])
+            lk = self.look_now()                     # looked at from the doorway: the QR is in THAT room
+            qcell = lk[0] if lk is not None else C.cell_of(pose[0], pose[1])
+            self.qr_cell = qcell
             hint = SC.scene_from_text(text)          # 'My friend is at the gym' -> fitness_centre
             if hint:
                 self.m05_scene_hint = hint
-            self.emit('M04', 'qr', scene=self.scene_now(C.cell_of(pose[0], pose[1])), message=text,
+            self.emit('M04', 'qr', scene=self.scene_now(qcell), message=text,
                       score=1.0, src='qr')
             self.evt_pub.publish(C.jmsg({'type': 'qr_decoded', 'text': text,
                                          'hint': self.m05_scene_hint,
@@ -366,6 +383,9 @@ class Perception(Node):
         rng = max(rng - p['hazard_pos_inset_m'], 0.0)
         x = pose[0] + rng * math.cos(wa)
         y = pose[1] + rng * math.sin(wa)
+        lk = self.look_now()
+        if lk is not None:                     # looked at from the doorway: the sign is in that room
+            x, y = C.cell_centre(lk[0])
         pos = C.snap_to_cell_centre(x, y)
         cell = C.cell_of(x, y)
         off = abs(h['cx'] - p['cx']) / 320.0
@@ -457,10 +477,18 @@ class Perception(Node):
             return
         if self.speed > p['scene_max_speed']:
             return
-        vx_, vy_ = self.view_point()
-        cell = C.cell_of(vx_, vy_)
+        lk = self.look_now()
+        if lk is not None:
+            # reactive-core looks at a scene from its doorway: query for THAT cell, once per look direction
+            cell = lk[0]
+            vx_, vy_ = C.cell_centre(cell)
+            qkey = (cell, lk[1])
+        else:
+            vx_, vy_ = self.view_point()
+            cell = C.cell_of(vx_, vy_)
+            qkey = cell
         gap = t - self.last_query_t
-        new_cell = cell != self.last_query_cell
+        new_cell = qkey != self.last_query_cell
         urgent = self.force_query and gap > 1.0      # the camera model saw a person: a survivor room
         if not (urgent or (new_cell and gap > p['scene_min_gap_s']) or gap > p['scene_stationary_gap_s']):
             return
@@ -469,7 +497,7 @@ class Perception(Node):
         if cv2.Laplacian(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var() < p['blur_min']:
             return
         self.last_query_t = t
-        self.last_query_cell = cell
+        self.last_query_cell = qkey
         self.push_job({'kind': 'scene', 'img': img.copy(), 'prompt': SC.build_prompt(self.mission_text),
                        'pose': self.img_pose, 'cell': cell, 'view': (vx_, vy_)})
 

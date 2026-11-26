@@ -53,7 +53,19 @@ def load(path=None, overrides=()):
         if k not in cfg:
             raise KeyError('unknown parameter %r' % (k,))
         cfg[k] = _coerce(cfg[k], yaml.safe_load(v))
+    _check(cfg)
     return cfg
+
+
+CHOICES = {'nav_mode': ('grid', 'wall')}
+
+
+def _check(cfg):
+    """Switches with a fixed set of values: anything else stops the run at start (live 2026-11-26: branch
+    grid-nav run with --set nav_mode=cells silently drove wall following)."""
+    for k, allowed in CHOICES.items():
+        if k in cfg and cfg[k] not in allowed:
+            raise ValueError('%s must be one of %s, got %r' % (k, ' | '.join(allowed), cfg[k]))
 
 
 def diff(cfg):

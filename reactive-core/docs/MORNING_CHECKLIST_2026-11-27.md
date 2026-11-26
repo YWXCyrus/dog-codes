@@ -1,5 +1,17 @@
 # Competition morning (27 Nov) — branch `grid-nav`
 
+## 0. Branch `integrated` (grid-nav + scene looks / reversing / tilt rule, README 0b)
+Use `git checkout integrated` instead of `grid-nav` in A1. grid-nav itself ran live on 26 Nov (runs 20261126_065301 ... 071529).
+- [ ] **Reverse test** (e-stop held): in 071529 the dog did not move at -0.12 m/s. If it still does not, the
+      code notices after 2.5 s and turns round instead; `--set grid_reverse=false` skips the attempts.
+- [ ] **Feed stalls**: runs 26 Nov had up to ~1 s old feeds (all four at once) while reactive-core used <= 33 ms
+      per tick. Dry run with `top` open; then try `--set lio_restart=false` with no FAST-LIO running (grid mode
+      does not use it). Compare the `stale:` guard lines in `decisions.jsonl`.
+- [ ] **Scene look** (dry run, dog walked by hand to the cell in front of a scene room): `decisions.jsonl` shows
+      `scene ... kind scene` (or `dead_end`); `ros2 topic echo /rc/look_cell` shows the room's cell. Live: the dog
+      stops at the cell in front, looks ahead, 45 deg left, 45 deg right, and never walks in.
+- [ ] Perception: plain `ros2 launch ~/dog-codes/perception/perception.launch.py arena:=A` (odom now defaults to /rc/odom).
+
 Everything below was built and tested overnight **in the simulator only** (no ROS on the build PC, no dog).
 Nothing in it has run on the real dog yet. Prep time 09:00-11:45, prelims 12:15, software freeze before.
 The old behaviour is one switch away: `--set nav_mode=wall`.
@@ -65,3 +77,7 @@ Enter, then **drive the dog by controller** through 4-6 cells of the practice ar
 | never goes to the final cell | `--set explore_budget_s=300` |
 | curtain never tried | check it is dashed in the viewer; `--set cur_ask_camera=false` (push on lidar alone) |
 | stairs HOLD `stairs_unsure` | Captain takes them (0 points for the stairs), Enter resumes |
+| (integrated) walks into a scene room | its far wall was not seen as WALL yet: nothing to set; `scene_prop_min` only decides scene vs dead end |
+| (integrated) treats a corridor end as a scene and skips it | `--set scene_look=false` (drives in as grid-nav did) |
+| (integrated) HOLD `tilted_turn` on flat ground | `--set tilt_turn_deg=14` |
+| (integrated) reversing looks unsafe | `--set grid_reverse=false` (turns round instead) |

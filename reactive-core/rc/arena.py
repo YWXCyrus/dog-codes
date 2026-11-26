@@ -98,6 +98,7 @@ class Cell:
     stairs_src: str = ''
     labels: dict = field(default_factory=dict)   # perception: scene, survivor, hazard, object, qr
     obstructed: int = 0      # times an obstacle inside it stopped the dog on the way through
+    prop_n: float = 0.0      # returns inside it at scene_prop_h_lo..hi (props / furniture: a scene room)
 
 
 class ArenaMap:
@@ -369,10 +370,13 @@ class ArenaMap:
         h = P[:, 2]
         # terrain only from near returns: 2 deg of walking wobble is +-7 cm of height at 2 m
         near = (P[:, 0] - sx) ** 2 + (P[:, 1] - sy) ** 2 <= self.c['terrain_range_m'] ** 2
+        # props (scene rooms): above the terrain boards / rubble, seen from the neighbour cell (not only near)
+        prop = inner & (h >= self.c['scene_prop_h_lo']) & (h <= self.c['scene_prop_h_hi'])
         for name, m in (('floor_n', inner & (np.abs(h) < 0.10)),
                         ('flat_n', inner & near & (np.abs(h) < 0.04)),
                         ('raised_n', inner & near & (h >= 0.06) & (h <= 0.22)),
-                        ('high_n', inner & near & (h >= 0.25) & (h <= 0.60))):
+                        ('high_n', inner & near & (h >= 0.25) & (h <= 0.60)),
+                        ('prop_n', prop)):
             if not m.any():
                 continue
             keys, cnt = np.unique(ij[m], axis=0, return_counts=True)
@@ -480,6 +484,21 @@ class ArenaMap:
 
     def is_stairs(self, c):
         return c in self.cells and self.cells[c].stairs
+
+    def scene_kind(self, c, door_from):
+        """A cell looked at from the doorway and never entered (2026-11-26): its three borders other than the
+        one towards `door_from` are all WALL. With props inside (lidar returns at scene_prop_h_lo..hi, at least
+        scene_prop_min of them) it is a 'scene' room, without a 'dead_end'. None otherwise (also when visited,
+        stairs, or a border not seen yet: then the dog drives as before)."""
+        c, door_from = tuple(c), tuple(door_from)
+        d_door = dir_between(c, door_from)
+        if d_door is None or self.visited(c) or self.is_stairs(c):
+            return None
+        for d in DIRS:
+            if d != d_door and self.state(c, step(c, d)) != WALL:
+                return None
+        cl = self.cells.get(c)
+        return 'scene' if cl is not None and cl.prop_n >= self.c['scene_prop_min'] else 'dead_end'
 
     def set_label(self, c, key, value):
         self.cell(c).labels[key] = value

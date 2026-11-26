@@ -18,6 +18,20 @@ Special borders on the path:
   PROBE    (nothing else to explore, arena cells unvisited behind a wall): centre, face it, camera.
 Survivor room with the QR not read: LOOK at its walls (square + skewed to the entrance half).
 FINAL: the final cell's centre -> FINISH (HOLD 'finish', the dog stands).
+
+Branch `integrated` (2026-11-26):
+  SCENE    the next cell has WALL on its other three sides (ArenaMap.scene_kind): never entered. From the
+           centre of the doorway cell: face it (scene_look_s, until perception's /quad/scene_state names the
+           cell or scene_look_max_s), then scene_side_deg left and right (scene_side_s each, the QR on the
+           nearer half of a side wall: booklet v6.4 FAQ 4), square up again. A 'dead_end' (no props) gets the
+           front look only. NavOut.look = the cell being looked at (-> /rc/look_cell for perception). Then the
+           cell counts as visited and its doorway is closed for the planner.
+  REVERSE  a target straight behind (grid_reverse_cone_deg) over ground just walked - the centre of this cell,
+           or the centre of the cell the dog came from when the plan goes back that way - is reached by walking
+           backwards (grid_back_vx, at most grid_reverse_max_m) instead of turning round. The dog not moving
+           backwards while the guard passed the reverse for grid_back_give_up_s -> no more reversing this run.
+  TILT     no on-the-spot turn while the tilt stayed above tilt_turn_deg for tilt_turn_window_s (falls
+           2026-11-23/24: turning while pitched on a slab); it waits, HOLD 'tilted_turn' after tilt_turn_hold_s.
 """
 import collections
 import math
@@ -47,6 +61,8 @@ class NavIn:
     answers: list = field(default_factory=list)   # /quad/vlm_answer messages since the last step
     stairs_cue: dict = None               # stairs straight ahead: camera model or lidar detector
     perception: bool = False              # perception answers questions (its /quad/mission_status is fresh)
+    tilt_deg: float = 0.0
+    scene_seen: dict = field(default_factory=dict)   # cell -> time of perception's last /quad/scene_state for it
 
 
 @dataclass
@@ -60,6 +76,7 @@ class NavOut:
     front_ignore: tuple = None            # body-x band the guard's front stop ignores (curtain push)
     reverse_ok: bool = False
     fallback: bool = False                # no plan: let the reactive driver wander for a while
+    look: dict = None                     # scene look in progress: {'cell', 'pos', 'look', 'kind'} (-> /rc/look_cell)
 
 
 class CellNav:
@@ -86,6 +103,10 @@ class CellNav:
         self.stairs_asked = set()
         self.realigned = {}
         self.back_ok = True
+        self.scene_done = set()             # cells looked at from their doorway (never entered)
+        self.rev = None                     # reversing in progress: {'d0', 'active', 'last_t'}
+        self.tilt_hist = collections.deque()
+        self.tilt_wait_t0 = None
 
     # ------------------------------------------------------------------ helpers
     def _ev(self, t, **kw):
@@ -117,9 +138,17 @@ class CellNav:
         fd = L.free_distance(ni.pts, 0.0, self.c['lane_w'], dmax=need + 0.5)
         return fd if fd < need else None
 
-    def _drive_to(self, ni, px, py, tol=None, vx=None, strict=False):
+    def _reverse_ok(self, dist, err):
+        """Walk backwards to a point instead of turning round for it: it is straight behind, near enough, and
+        reversing still works this run. The caller vouches that the way back is ground the dog just walked."""
+        c = self.c
+        return (c['grid_reverse'] and self.back_ok and dist <= c['grid_reverse_max_m']
+                and abs(G.wrap(err - math.pi)) <= math.radians(c['grid_reverse_cone_deg']))
+
+    def _drive_to(self, ni, px, py, tol=None, vx=None, strict=False, may_reverse=False):
         """Turn-or-walk towards a point. Returns (cmd or None when arrived, info). Not strict: a point
-        beside or just behind the dog (< 0.30 m) counts as reached instead of turning round for it."""
+        beside or just behind the dog (< 0.30 m) counts as reached instead of turning round for it.
+        may_reverse: a point straight behind over walked ground is reached backwards (see _reverse_ok)."""
         c = self.c
         x, y, yaw = ni.apose
         dx, dy = px - x, py - y
@@ -129,6 +158,8 @@ class CellNav:
             self.turning = False
             return None, {'dist': dist}
         err = G.wrap(math.atan2(dy, dx) - yaw)
+        if may_reverse and not self.turning and self._reverse_ok(dist, err):
+            return Cmd(-c['grid_back_vx'], 0.0), {'dist': dist, 'err': err, 'reverse': True}
         along = dist * math.cos(err)
         if not strict and dist < 0.30 and along < 0.05:
             self.turning = False                    # beside / past it: do not circle around it
@@ -218,9 +249,59 @@ class CellNav:
     def step(self, ni):
         self.events = []
         out = self._step(ni)
+        out = self._reverse_watch(ni, out)
+        out = self._tilt_turn(ni, out)
         out.events = self.events + out.events
         out.phase = self.phase_str()
         return out
+
+    def _reverse_watch(self, ni, out):
+        """Every backwards command (also the curtain retreat / backing out): the guard must let it through
+        (reverse_ok), and a dog that does not move backwards ends reversing for this run. Only ticks where the
+        guard really passed a reverse (last_vx < 0) count - a guard stop for stale feeds is not a failure."""
+        c, t = self.c, ni.t
+        if out.cmd.vx >= 0.0 or out.hold:
+            self.rev = None
+            return out
+        out.reverse_ok = True
+        r = self.rev
+        if r is None:
+            self.rev = r = {'d0': ni.travelled, 'active': 0.0, 'last_t': t}
+        if ni.last_vx < -0.05:
+            r['active'] += max(0.0, min(t - r['last_t'], 0.5))
+        r['last_t'] = t
+        if r['active'] >= c['grid_back_give_up_s'] and ni.travelled - r['d0'] < 0.03:
+            self.back_ok = False
+            self.rev = None
+            self._ev(t, grid='reversing: the dog does not move backwards - turning round from now on')
+            self._set('PLAN', t)
+            self.plan_t = -1e9
+            return NavOut(Cmd(), '')
+        if ni.travelled - r['d0'] >= 0.03:
+            r['d0'], r['active'] = ni.travelled, 0.0        # it moves: watch the next stretch
+        return out
+
+    def _tilt_turn(self, ni, out):
+        """No on-the-spot turn while the tilt stays above tilt_turn_deg for tilt_turn_window_s: wait for level
+        ground; HOLD 'tilted_turn' after tilt_turn_hold_s of waiting."""
+        c, t = self.c, ni.t
+        self.tilt_hist.append((t, ni.tilt_deg))
+        while self.tilt_hist and t - self.tilt_hist[0][0] > c['tilt_turn_window_s']:
+            self.tilt_hist.popleft()
+        tilted = (t - self.tilt_hist[0][0] >= 0.9 * c['tilt_turn_window_s']
+                  and min(v for _, v in self.tilt_hist) > c['tilt_turn_deg'])
+        turning = out.cmd.vx == 0.0 and out.cmd.wz != 0.0 and not out.hold
+        if not (tilted and turning):
+            if not tilted:
+                self.tilt_wait_t0 = None
+            return out
+        if self.tilt_wait_t0 is None:
+            self.tilt_wait_t0 = t
+            self._ev(t, grid='tilted %.0f deg: no turn on the spot, waiting for level ground' % ni.tilt_deg)
+        if t - self.tilt_wait_t0 > c['tilt_turn_hold_s']:
+            self.tilt_wait_t0 = None
+            return NavOut(Cmd(), '', hold='tilted_turn')
+        return NavOut(Cmd(), '', look=out.look)
 
     def phase_str(self):
         p = self.phase
@@ -250,6 +331,8 @@ class CellNav:
                 self._set('PLAN', t)
         if self.phase == 'LOOK':
             return self._look(ni)
+        if self.phase == 'SCENE':
+            return self._scene(ni)
         if self.phase == 'BACK':
             return self._back(ni)
         if self.phase == 'STAIRS_ASK':
@@ -261,6 +344,20 @@ class CellNav:
             return self._curtain(ni, cur)
         if self.phase == 'STAIRS_WAIT':
             return self._stairs_wait(ni, cur)
+
+        # ---- base_link already over the doorway of a scene / dead end (seen late): back out of it, look
+        door = self.came_from.get(cur)
+        if door is not None:
+            prev = A.step(cur, door)
+            kind = self._scene_at(prev, cur)
+            if kind is not None:
+                px_, py_ = m.centre(prev)
+                cmd, info = self._drive_to(ni, px_, py_, tol=c['centre_tol_m'] * 0.7, strict=True,
+                                           may_reverse=True)
+                if cmd is not None and info.get('reverse'):
+                    return NavOut(cmd, '')
+                self.turning = False
+                return self._start_scene(ni, prev, cur, A.dir_between(prev, cur), kind)
 
         self._replan(ni, cur, force=self.phase == 'PLAN')
         self.phase = 'GO'
@@ -299,24 +396,41 @@ class CellNav:
             return NavOut(Cmd(), '')
         e = m.edges.get(A.edge_key(cur, nxt))
         special = None
-        if m.is_stairs(nxt) and not m.is_stairs(cur):
+        scene = self._scene_at(cur, nxt)
+        if scene is not None:
+            special = 'scene'                     # looked at from here, never entered
+        elif m.is_stairs(nxt) and not m.is_stairs(cur):
             special = 'stairs'
         elif e is not None and (e.state == A.CURTAIN or e.was_curtain):
             special = 'curtain'                   # every crossing of a curtain (also back through it) is a push
         yaw_d = A.DIR_YAW[d]
         turn_needed = abs(G.wrap(yaw_d - yaw)) > math.radians(30.0)
         off = math.hypot(x - cx, y - cy)
+        # the plan goes back the way the dog came (nothing left ahead): walk backwards to the previous cell's
+        # centre over the ground just walked, then turn there towards the next unexplored cell (checked before
+        # the centre rule below: backing out of this cell needs no turn in it)
+        if (special is None and self.came_from.get(cur) == d and m.visited(nxt) and not m.is_stairs(nxt)
+                and abs(G.wrap(yaw_d - yaw)) > math.radians(150.0)):
+            bx_, by_ = m.centre(nxt)
+            cmd, info = self._drive_to(ni, bx_, by_, may_reverse=True)
+            if cmd is not None and info.get('reverse'):
+                return NavOut(cmd, '')
         if special is not None or (turn_needed and off > c['centre_tol_m']):
             # corners / special borders: get to the centre of this cell first, then square up
             if off > c['centre_tol_m']:
+                # a centre behind the dog is ground it just walked over: back to it instead of turning round
                 cmd, info = self._drive_to(ni, cx, cy, tol=c['centre_tol_m'] * 0.7, vx=c['grid_vx_near'],
-                                           strict=True)
+                                           strict=True, may_reverse=True)
                 if cmd is not None:
+                    if info.get('reverse'):
+                        return NavOut(cmd, '')
                     return self._walk_out(ni, cmd, info, cur, None)
             if special is not None:
                 cmd = self._turn_to(yaw, yaw_d)
                 if cmd is not None:
                     return NavOut(cmd, '')
+                if special == 'scene':
+                    return self._start_scene(ni, cur, nxt, d, scene)
                 if special == 'stairs':
                     self._set('STAIRS_WAIT', t, nxt=nxt, d=d)
                     self._ev(t, grid='at the stairs: %s -> %s' % (cur, nxt))
@@ -491,11 +605,8 @@ class CellNav:
         x, y, yaw = ni.apose
         along = (s['tx'] - x) * math.cos(yaw + math.pi) + (s['ty'] - y) * math.sin(yaw + math.pi)
         moved = ni.travelled - s['d0']
-        stuck = ni.t - s['t0'] > c['grid_back_give_up_s'] and moved < 0.03   # live 2026-11-26: the dog did not reverse
-        if along <= 0.05 or moved >= c['grid_back_max_m'] or ni.t - s['t0'] > 10.0 or stuck:
-            if stuck:
-                self.back_ok = False              # once is enough: never try again this run (live: endless retries)
-                self._ev(ni.t, grid='backing: the dog does not move backwards - no more backing this run')
+        # not moving backwards (live 2026-11-26): _reverse_watch ends it and stops reversing for the run
+        if along <= 0.05 or moved >= c['grid_back_max_m'] or ni.t - s['t0'] > 10.0 or not self.back_ok:
             self._set('PLAN', ni.t)
             self.plan_t = -1e9
             return NavOut(Cmd(), '')
@@ -570,6 +681,79 @@ class CellNav:
         if t - s['since'] >= c['qr_look_s'] or ((ni.mission or {}).get('qr') or {}).get('read'):
             s['k'] = s['k'] + 1 if not ((ni.mission or {}).get('qr') or {}).get('read') else len(s['yaws'])
             s['since'] = None
+        return NavOut(Cmd(), '')
+
+    # ------------------------------------------------------------------ scene rooms: look from the doorway
+    def _scene_at(self, door_cell, cell):
+        """'scene' / 'dead_end' when `cell`, seen from `door_cell`, is to be looked at from the doorway and that
+        look is still to do; None otherwise (exploring only: a final-cell candidate is never one)."""
+        c, m = self.c, self.m
+        if not c['scene_look'] or self.goal_mode != 'explore' or tuple(cell) in self.scene_done:
+            return None
+        if not m.possible(cell):
+            return None
+        e = m.edges.get(A.edge_key(door_cell, cell))
+        if e is not None and (e.state == A.CURTAIN or e.was_curtain):
+            return None                           # booklet: never a curtain at a scene entrance - push through it
+        return m.scene_kind(cell, door_cell)
+
+    def _start_scene(self, ni, cur, cell, d, kind):
+        c, t = self.c, ni.t
+        base = A.DIR_YAW[d]
+        yaws = [base]
+        if kind == 'scene':
+            a = math.radians(c['scene_side_deg'])
+            yaws += [G.wrap(base + a), G.wrap(base - a), base]     # left, right, square up again
+        self._set('SCENE', t, cell=tuple(cell), cur=tuple(cur), kind=kind, yaws=yaws, k=0, since=None,
+                  answered=False)
+        self._ev(t, grid='%s %s: looking from the doorway %s, not entering' % (kind, tuple(cell), tuple(cur)),
+                 scene=list(cell), kind=kind, pos=[round(v, 2) for v in self.m.centre(cell)])
+        return self._scene(ni)
+
+    def _scene(self, ni):
+        """Front look (until perception answered for the cell, scene_look_s..scene_look_max_s), then the side
+        looks (scene_side_s each), then squared up again. The look cell goes out every tick."""
+        c, m, t = self.c, self.m, ni.t
+        s = self.sub
+        look = {'cell': list(s['cell']), 'pos': [round(v, 2) for v in m.centre(s['cell'])], 'look': s['k'],
+                'kind': s['kind']}
+        if (ni.scene_seen or {}).get(s['cell'], -1e9) >= s['t0']:
+            s['answered'] = True
+        if s['k'] >= len(s['yaws']) or t - s['t0'] > c['scene_max_s']:
+            return self._scene_done(ni)
+        cmd = self._turn_to(ni.apose[2], s['yaws'][s['k']], tol_deg=5.0)
+        if cmd is not None:
+            s['since'] = None
+            return NavOut(cmd, '', look=look)
+        if s['since'] is None:
+            s['since'] = t
+        held = t - s['since']
+        if s['k'] == 0:
+            done = held >= c['scene_look_s'] and (s['answered'] or not ni.perception
+                                                  or held >= c['scene_look_max_s'])
+        elif s['k'] == len(s['yaws']) - 1:
+            done = True                                        # squared up again: no hold
+        else:
+            done = held >= c['scene_side_s']
+        if done:
+            s['k'] += 1
+            s['since'] = None
+        return NavOut(Cmd(), '', look=look)
+
+    def _scene_done(self, ni):
+        m, t = self.m, ni.t
+        s = self.sub
+        cell, cur = s['cell'], s['cur']
+        self.scene_done.add(cell)
+        m.force_visit(cell, t)                    # counts for the tour and the 3 x 5 bounds ...
+        self.paused.add(cell)
+        m.set_label(cell, 'look', s['kind'])
+        if m.cell_of(ni.apose[0], ni.apose[1]) != tuple(cell):
+            m.block(cur, cell, t, 1e9)            # ... but the planner never walks in (unless the dog stands in it)
+        self._ev(t, grid='%s %s looked at from %s - not entered' % (s['kind'], cell, cur), scene_done=list(cell),
+                 answered=s['answered'])
+        self._set('PLAN', t)
+        self.plan_t = -1e9
         return NavOut(Cmd(), '')
 
     # ------------------------------------------------------------------ stairs

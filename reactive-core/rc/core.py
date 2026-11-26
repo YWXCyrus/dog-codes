@@ -91,6 +91,8 @@ class Core:
         self.mission_t = None
         self.answers = []                          # /quad/vlm_answer since the last decision
         self.pending_asks = []                     # -> /quad/vlm_ask
+        self.pending_look = None                   # -> /rc/look_cell (scene look from the doorway)
+        self.scene_seen = {}                       # cell -> time of the last /quad/scene_state for it
         self.qevents = []                          # recent /quad/event (viewer)
         self.cam = {k: DetectionPersist(k, cfg['cam_det_conf'], cfg['cam_det_n'], cfg['cam_det_window_s'],
                                         cfg['cam_det_cone_deg']) for k in ('curtain', 'stairs', 'human')}
@@ -271,6 +273,18 @@ class Core:
         self.answers.append(ans)
         self.pending_events.append({'t': round(t, 2), 'vlm_answer': ans})
 
+    def on_scene_state(self, st, t):
+        """/quad/scene_state (perception: one scene-server answer, with the arena cell it was for): ends the
+        front look at a scene room (rc/cellnav.py SCENE)."""
+        try:
+            cell = tuple(int(v) for v in st.get('cell'))
+        except (TypeError, ValueError, AttributeError):
+            return
+        if len(cell) == 2:
+            self.scene_seen[cell] = t
+            self.pending_events.append({'t': round(t, 2), 'scene_state': list(cell), 'scene': st.get('scene'),
+                                        'survivor': st.get('survivor')})
+
     def _off_body(self, pts):
         """Drop points inside the dog's own outline: standing still, the lidar sees its own front legs
         (live 2026-11-26: lane 'blocked' 0.05 m ahead of base_link, the guard's front said 3 m free)."""
@@ -418,7 +432,8 @@ class Core:
                              elapsed=t - (self.t_go if self.t_go is not None else t), mission=self.mission,
                              curtain_det=self.cam['curtain'].seen(t), answers=self.answers,
                              stairs_cue=self._stairs_cue(t),
-                             perception=self.mission_t is not None and t - self.mission_t < 5.0)
+                             perception=self.mission_t is not None and t - self.mission_t < 5.0,
+                             scene_seen=self.scene_seen)
             self.answers = []
             t_cpu = time.perf_counter()
             out = self.driver.step(di)
@@ -426,6 +441,7 @@ class Core:
             self.cpu['tick_max'] = max(self.cpu.get('tick_max', 0.0) * 0.98, dt_ms)
             if out.ask is not None:
                 self.pending_asks.append(out.ask)
+            self.pending_look = out.look
             self.drive_out = out
             self.drive_cmd = out.cmd
             codes.extend(out.codes)

@@ -326,10 +326,12 @@ def main(argv=None):
                 ages = core.ages(t)
                 posture = core.posture
                 asks, core.pending_asks = core.pending_asks, []
+                look, core.pending_look = core.pending_look, None
                 apose = core.apose(t)
             io.send(out.cmd, out.codes)
             io.publish_asks(asks)                     # camera questions to perception (never a motion)
             io.publish_arena_odom(apose)              # /rc/odom: snapped arena pose for perception's positions
+            io.publish_look(look)                     # /rc/look_cell: the scene cell looked at from its doorway
             for e in out.events:
                 e = dict(e, t=round(e.get('t', t) - t0, 2))      # core times are monotonic: make them run time
                 log(e)

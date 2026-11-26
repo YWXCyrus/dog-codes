@@ -97,3 +97,18 @@ def test_status_is_json_serialisable():
     s = json.dumps(st)
     assert '"1,0": "clinic"' in s and st['stairs_cells'] == [[3, 1]]
     assert math.isclose(st['t'], 12.3)
+
+
+def test_look_cell_parsed_from_reactive_core_json():
+    lk = PC.parse_look('{"cell":[2,0],"pos":[2.04,0.0],"look":1,"kind":"scene"}', 5.0)
+    assert lk == ((2, 0), 1, 5.0)
+    assert PC.parse_look('{"cell":[2]}', 5.0) is None
+    assert PC.parse_look('not json', 5.0) is None
+    assert PC.parse_look('{"pos":[1,2]}', 5.0) is None
+
+
+def test_look_cell_used_only_while_fresh():
+    lk = ((2, 0), 0, 10.0)
+    assert PC.fresh_look(lk, 11.0, 1.5) == lk
+    assert PC.fresh_look(lk, 11.6, 1.5) is None
+    assert PC.fresh_look(None, 11.0, 1.5) is None

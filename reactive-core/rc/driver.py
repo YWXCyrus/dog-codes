@@ -45,6 +45,7 @@ class DriverInput:
     answers: list = field(default_factory=list)
     stairs_cue: dict = None             # stairs straight ahead (camera model / lidar detector)
     perception: bool = False            # perception is running (fresh /quad/mission_status)
+    scene_seen: dict = field(default_factory=dict)   # cell -> time of perception's last /quad/scene_state for it
 
 
 @dataclass
@@ -58,6 +59,7 @@ class DriverOutput:
     ask: dict = None                    # question for perception (/quad/vlm_ask)
     front_ignore: tuple = None          # guard: front-stop band ignored (curtain push)
     reverse_ok: bool = False            # guard: curtain retreat
+    look: dict = None                   # grid mode: the scene cell being looked at (-> /rc/look_cell)
 
 
 class Driver:
@@ -98,6 +100,7 @@ class Driver:
         self.nav = None                 # rc.cellnav.CellNav in grid mode (set by core)
         self.grid_fallback_until = -1e9
         self.nav_ask = None
+        self.nav_look = None
         self.front_ignore = None
         self.reverse_ok = False
         self.stair_cells = []           # arena cells passed while climbing / descending (grid mode)
@@ -232,6 +235,7 @@ class Driver:
         t = di.t
         self.events, self.codes = [], []
         self.nav_ask, self.front_ignore, self.reverse_ok = None, None, False
+        self.nav_look = None
         if self.t_start is None:
             self.t_start = t
             self.last_new_cell_t = t
@@ -566,10 +570,12 @@ class Driver:
         ni = NavIn(t=t, apose=di.apose, pts=di.nav_pts if di.nav_pts is not None else np.zeros((0, 2)),
                    travelled=self._dist(di), odom_ok=di.odom_ok or self.odom_frozen, elapsed=di.elapsed,
                    last_vx=di.last_cmd.vx, mission=di.mission, curtain_det=di.curtain_det, answers=di.answers,
-                   stairs_cue=di.stairs_cue, perception=di.perception)
+                   stairs_cue=di.stairs_cue, perception=di.perception, tilt_deg=di.tilt_deg,
+                   scene_seen=di.scene_seen)
         no = self.nav.step(ni)
         self.events.extend(no.events)
         self.nav_ask = no.ask
+        self.nav_look = no.look
         self.front_ignore, self.reverse_ok = no.front_ignore, no.reverse_ok
         if no.hold:
             self.phase = no.phase
@@ -628,4 +634,4 @@ class Driver:
     def _out(self, cmd):
         return DriverOutput(cmd=cmd, mode=self.mode, phase=self.phase, codes=list(self.codes),
                             events=list(self.events), stairs_mode=self.stairs_mode, ask=self.nav_ask,
-                            front_ignore=self.front_ignore, reverse_ok=self.reverse_ok)
+                            front_ignore=self.front_ignore, reverse_ok=self.reverse_ok, look=self.nav_look)
