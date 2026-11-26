@@ -1,9 +1,9 @@
 # Competition morning (27 Nov) — branch `grid-nav`
 
-## 0. Branch `integrated` (grid-nav + scene looks / reversing / tilt rule, README 0b)
+## 0. Branch `integrated` (grid-nav + scene looks / reversing, README 0b)
 Use `git checkout integrated` instead of `grid-nav` in A1. grid-nav itself ran live on 26 Nov (runs 20261126_065301 ... 071529).
-- [ ] **Reverse test** (e-stop held): in 071529 the dog did not move at -0.12 m/s. If it still does not, the
-      code notices after 2.5 s and turns round instead; `--set grid_reverse=false` skips the attempts.
+- [ ] Reversing is OFF by default (runs 071529 / 093607: the dog did not move at -0.12 m/s). `--set grid_reverse=true`
+      tries it again; the code notices after 2.5 s without motion and turns round instead.
 - [ ] **Feed stalls**: runs 26 Nov had up to ~1 s old feeds (all four at once) while reactive-core used <= 33 ms
       per tick. Dry run with `top` open; then try `--set lio_restart=false` with no FAST-LIO running (grid mode
       does not use it). Compare the `stale:` guard lines in `decisions.jsonl`.
@@ -79,5 +79,4 @@ Enter, then **drive the dog by controller** through 4-6 cells of the practice ar
 | stairs HOLD `stairs_unsure` | Captain takes them (0 points for the stairs), Enter resumes |
 | (integrated) walks into a scene room | its far wall was not seen as WALL yet: nothing to set; `scene_prop_min` only decides scene vs dead end |
 | (integrated) treats a corridor end as a scene and skips it | `--set scene_look=false` (drives in as grid-nav did) |
-| (integrated) HOLD `tilted_turn` on flat ground | `--set tilt_turn_deg=14` |
-| (integrated) reversing looks unsafe | `--set grid_reverse=false` (turns round instead) |
+| (integrated) want it to reverse instead of turning round | `--set grid_reverse=true` (off by default: the dog did not move backwards) |

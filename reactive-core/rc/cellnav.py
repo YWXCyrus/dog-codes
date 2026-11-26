@@ -30,8 +30,7 @@ Branch `integrated` (2026-11-26):
            or the centre of the cell the dog came from when the plan goes back that way - is reached by walking
            backwards (grid_back_vx, at most grid_reverse_max_m) instead of turning round. The dog not moving
            backwards while the guard passed the reverse for grid_back_give_up_s -> no more reversing this run.
-  TILT     no on-the-spot turn while the tilt stayed above tilt_turn_deg for tilt_turn_window_s (falls
-           2026-11-23/24: turning while pitched on a slab); it waits, HOLD 'tilted_turn' after tilt_turn_hold_s.
+           Off by default (grid_reverse: false): the real dog did not move backwards (run 093607).
 """
 import collections
 import math
@@ -61,7 +60,6 @@ class NavIn:
     answers: list = field(default_factory=list)   # /quad/vlm_answer messages since the last step
     stairs_cue: dict = None               # stairs straight ahead: camera model or lidar detector
     perception: bool = False              # perception answers questions (its /quad/mission_status is fresh)
-    tilt_deg: float = 0.0
     scene_seen: dict = field(default_factory=dict)   # cell -> time of perception's last /quad/scene_state for it
 
 
@@ -105,8 +103,6 @@ class CellNav:
         self.back_ok = True
         self.scene_done = set()             # cells looked at from their doorway (never entered)
         self.rev = None                     # reversing in progress: {'d0', 'active', 'last_t'}
-        self.tilt_hist = collections.deque()
-        self.tilt_wait_t0 = None
 
     # ------------------------------------------------------------------ helpers
     def _ev(self, t, **kw):
@@ -250,7 +246,6 @@ class CellNav:
         self.events = []
         out = self._step(ni)
         out = self._reverse_watch(ni, out)
-        out = self._tilt_turn(ni, out)
         out.events = self.events + out.events
         out.phase = self.phase_str()
         return out
@@ -280,28 +275,6 @@ class CellNav:
         if ni.travelled - r['d0'] >= 0.03:
             r['d0'], r['active'] = ni.travelled, 0.0        # it moves: watch the next stretch
         return out
-
-    def _tilt_turn(self, ni, out):
-        """No on-the-spot turn while the tilt stays above tilt_turn_deg for tilt_turn_window_s: wait for level
-        ground; HOLD 'tilted_turn' after tilt_turn_hold_s of waiting."""
-        c, t = self.c, ni.t
-        self.tilt_hist.append((t, ni.tilt_deg))
-        while self.tilt_hist and t - self.tilt_hist[0][0] > c['tilt_turn_window_s']:
-            self.tilt_hist.popleft()
-        tilted = (t - self.tilt_hist[0][0] >= 0.9 * c['tilt_turn_window_s']
-                  and min(v for _, v in self.tilt_hist) > c['tilt_turn_deg'])
-        turning = out.cmd.vx == 0.0 and out.cmd.wz != 0.0 and not out.hold
-        if not (tilted and turning):
-            if not tilted:
-                self.tilt_wait_t0 = None
-            return out
-        if self.tilt_wait_t0 is None:
-            self.tilt_wait_t0 = t
-            self._ev(t, grid='tilted %.0f deg: no turn on the spot, waiting for level ground' % ni.tilt_deg)
-        if t - self.tilt_wait_t0 > c['tilt_turn_hold_s']:
-            self.tilt_wait_t0 = None
-            return NavOut(Cmd(), '', hold='tilted_turn')
-        return NavOut(Cmd(), '', look=out.look)
 
     def phase_str(self):
         p = self.phase

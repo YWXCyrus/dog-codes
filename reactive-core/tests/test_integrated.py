@@ -9,7 +9,7 @@ from rc import arena as A
 from rc import config
 from rc.cellnav import CellNav, NavIn
 
-CFG = config.load()
+CFG = dict(config.load(), grid_reverse=True)     # the reversing tests switch it on (default off)
 RECT = (0, 4, -1, 1)                      # the one live 3 x 5 placement in these maps
 
 
@@ -50,19 +50,18 @@ def make_nav(m, here, came='S'):
 class Dog:
     """Toy kinematics: the command is followed exactly, except `reverses=False` (the real dog 2026-11-26)."""
 
-    def __init__(self, x, y, yaw, reverses=True, guard_passes_reverse=True, tilt=0.0):
+    def __init__(self, x, y, yaw, reverses=True, guard_passes_reverse=True):
         self.x, self.y, self.yaw = x, y, yaw
         self.travelled = 0.0
         self.last_vx = 0.0
         self.reverses = reverses
         self.guard_passes = guard_passes_reverse
-        self.tilt = tilt
         self.t = 0.0
 
     def ni(self, perception=True, scene_seen=None):
         return NavIn(t=self.t, apose=(self.x, self.y, self.yaw), pts=np.zeros((0, 2)), travelled=self.travelled,
                      odom_ok=True, elapsed=self.t, last_vx=self.last_vx, perception=perception,
-                     tilt_deg=self.tilt, scene_seen=scene_seen or {})
+                     scene_seen=scene_seen or {})
 
     def apply(self, cmd, dt=0.1):
         vx = cmd.vx
@@ -243,6 +242,7 @@ def test_guard_stopping_the_reverse_for_stale_feeds_is_not_a_failed_reverse():
 
 
 def test_no_reverse_when_switched_off():
+    assert config.load()['grid_reverse'] is False                 # default since run 093607
     cfg = dict(CFG, grid_reverse=False)
     m = back_way_map()
     nav = CellNav(cfg, m)
@@ -252,22 +252,15 @@ def test_no_reverse_when_switched_off():
     assert out.cmd.vx >= 0 and out.cmd.wz != 0                    # turns round as before
 
 
-# ---------------------------------------------------------------- tilt
-def test_no_turn_on_the_spot_while_tilted_then_hold():
+# ---------------------------------------------------------------- tilt (rule removed 2026-11-26)
+def test_tilted_dog_still_turns_on_the_spot():
+    """The no-turn-while-tilted rule held the dog on the uneven terrain (run 094043): removed."""
     m = scene_map(props=100.0)
     nav = make_nav(m, (1, 0))
-    dog = Dog(1.02, 0.0, 0.0, tilt=12.0)
-    outs = drive(nav, dog, 30.0, answer_after=0.0)
-    assert all(o.cmd.wz == 0.0 for o in outs)
-    assert outs[-1].hold == 'tilted_turn'
-
-
-def test_a_turns_own_wobble_does_not_stop_it():
-    m = scene_map(props=100.0)
-    nav = make_nav(m, (1, 0))
-    dog = Dog(1.02, 0.0, 0.0, tilt=6.3)
+    dog = Dog(1.02, 0.0, 0.0)
     outs = drive(nav, dog, 30.0, answer_after=0.0)
     assert any(o.cmd.wz != 0.0 for o in outs) and not any(o.hold for o in outs)
+    assert not hasattr(nav, '_tilt_turn') and 'tilt_turn_deg' not in config.load()
 
 
 # ---------------------------------------------------------------- config

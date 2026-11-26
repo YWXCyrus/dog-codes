@@ -190,12 +190,9 @@ grid_back_vx: 0.12                   # (0.08 did not move the real dog, live 202
 body_x_m: 0.35                       # grid lanes ignore points inside the dog's outline (+-this along x from base_link) ...
 body_y_m: 0.24                       # ... and +-this across (its own legs)
 grid_back_give_up_s: 2.5             # the guard passed a reverse this long and the dog did not move: no more reversing this run
-grid_reverse: true                   # branch integrated: a target straight behind over walked ground is reached backwards
+grid_reverse: false                  # true: a target straight behind over walked ground is reached backwards (off 2026-11-26: the real dog did not move backwards at -0.12 m/s, run 093607)
 grid_reverse_max_m: 1.10             # ... (this cell's centre, or the previous cell's when the plan goes back) up to this far
 grid_reverse_cone_deg: 20.0          # ... only when it lies within this of straight behind; else turn round
-tilt_turn_deg: 10.0                  # no on-the-spot turn while the tilt stays above this ... (falls: turning pitched 14-17 deg on a slab)
-tilt_turn_window_s: 1.0              # ... for this long (a turn's own wobble reached 6.3 deg, run 073255)
-tilt_turn_hold_s: 5.0                # waiting for level ground longer than this -> HOLD tilted_turn
 # scene rooms (branch integrated): a cell with WALL on its three other sides is looked at from the doorway, never entered
 scene_look: true                     # false = drive into them as before
 scene_prop_h_lo: 0.25                # props inside the cell: returns this high above the floor (above rubble 0.22) ...
