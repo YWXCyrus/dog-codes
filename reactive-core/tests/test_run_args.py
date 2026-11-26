@@ -10,33 +10,35 @@ def chk(argv, dom):
 
 
 def test_default_is_dry_run():
-    ok, code, mode = chk([], '1')
+    ok, code, mode = chk([], '61')
     assert ok and mode == 'dry-run'
 
 
-def test_live_needs_domain_1():
+def test_live_needs_domain_61():
     assert chk(['--live'], '42')[:2] == (False, 2)
-    assert chk(['--live'], '1') == (True, 0, 'live')
+    assert chk(['--live'], '1')[:2] == (False, 2)          # the dog's old domain (until 2026-11-27)
+    assert chk(['--live'], '61') == (True, 0, 'live')
 
 
-def test_sim_refused_on_domain_1():
+def test_sim_refused_on_dog_domains():
+    assert chk(['--sim'], '61')[:2] == (False, 2)
     assert chk(['--sim'], '1')[:2] == (False, 2)
     assert chk(['--sim'], '42') == (True, 0, 'sim')
 
 
 def test_auto_go_only_with_sim():
     assert not chk(['--auto-go'], '42')[0]
-    assert not chk(['--live', '--auto-go'], '1')[0]
+    assert not chk(['--live', '--auto-go'], '61')[0]
     assert chk(['--sim', '--auto-go'], '42')[0]
 
 
 def test_gait_test_needs_publishing_mode():
-    assert not chk(['--gait-test', 'ai_basic'], '1')[0]
-    assert chk(['--live', '--gait-test', 'ai_basic'], '1')[0]
+    assert not chk(['--gait-test', 'ai_basic'], '61')[0]
+    assert chk(['--live', '--gait-test', 'ai_basic'], '61')[0]
 
 
 def test_live_and_sim_exclusive():
-    assert not chk(['--live', '--sim'], '1')[0]
+    assert not chk(['--live', '--sim'], '61')[0]
 
 
 def test_set_parsed():

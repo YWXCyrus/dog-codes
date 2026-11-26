@@ -25,7 +25,7 @@ ros2 launch lite3_launcher lite3.launch.py navigation:=False
 # terminal 2: reactive-core
 cd ~/dog-codes/reactive-core && python3 run.py --live
 # terminal 3: AFTER run.py printed "Ready" (it restarts FAST-LIO; /odom then starts at the dog's start)
-source /opt/ros/humble/setup.bash && export ROS_DOMAIN_ID=1
+source /opt/ros/humble/setup.bash && export ROS_DOMAIN_ID=61
 ros2 launch ~/dog-codes/perception/perception.launch.py
 ```
 Arguments: `dry_run:=true` (reporter logs the JSON, sends nothing), `scene_enabled:=false` (no

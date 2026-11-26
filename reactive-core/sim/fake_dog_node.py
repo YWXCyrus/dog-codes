@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake Lite3 for the ROS wiring test (ROS_DOMAIN_ID must NOT be 1).
+"""Fake Lite3 for the ROS wiring test (ROS_DOMAIN_ID must NOT be 61 - the dog - or 1, its old domain).
 
 Publishes like the dog: /livox/points (PointCloud2, livox_frame, 10 Hz), /imu/data, /joint_states,
 /leg_odom (PoseWithCovarianceStamped), /tf_static. Subscribes /nav_cmd_vel (stands in for the TA
@@ -126,8 +126,9 @@ def main():
     ap.add_argument('--ai-ignores-cmd', action='store_true')
     ap.add_argument('--summary', default=None)
     a = ap.parse_args()
-    if os.environ.get('ROS_DOMAIN_ID', '0') == '1':
-        print('refusing: the fake dog must not run on ROS_DOMAIN_ID=1')
+    dom = os.environ.get('ROS_DOMAIN_ID', '0').strip()
+    if dom in ('61', '1'):
+        print('refusing: the fake dog must not run on ROS_DOMAIN_ID=%s (a dog domain)' % dom)
         return 2
     rclpy.init()
     n = FakeDog(a)

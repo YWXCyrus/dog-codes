@@ -2,8 +2,8 @@
 """reactive-core: one script for the Lite3 (spec docs/specs/2026-11-20-reactive-nav-design.md).
 
   python3 run.py                 DRY RUN (default): everything runs, nothing is sent to the dog
-  python3 run.py --live          the real dog (needs ROS_DOMAIN_ID=1 and the TA bring-up running)
-  python3 run.py --sim           publishes, but only on a ROS_DOMAIN_ID other than 1 (fake dog tests)
+  python3 run.py --live          the real dog (needs ROS_DOMAIN_ID=61 and the TA bring-up running)
+  python3 run.py --sim           publishes, but only on a ROS_DOMAIN_ID other than 61 and 1 (fake dog tests)
 
   --set key=value                override a parameter from config.yaml (repeatable)
   --gait-test ai_basic           only: start-up, Enter AI -> AI Basic, 1 s turn, 1 s forward, Exit AI
@@ -39,12 +39,15 @@ RECORD_TOPICS = ['/livox/points', '/leg_odom', '/leg_odom2', '/odom', '/imu/data
                  '/rc/detections']                                      # grid nav + perception
 CAMERA_TOPIC = '/camera/color/image_raw'
 FEED_LOST_EXIT_S = 5.0
+DOG_DOMAIN = '61'                   # the dog's ROS_DOMAIN_ID (2026-11-27: 1 -> 61, user: 61 works better)
+NOT_FOR_TESTS = (DOG_DOMAIN, '1')   # --sim / fake dog refuse these (1 = the dog's old domain)
 
 
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description='reactive-core for the Lite3 (default: dry run)')
-    ap.add_argument('--live', action='store_true', help='command the real dog (ROS_DOMAIN_ID=1)')
-    ap.add_argument('--sim', action='store_true', help='publish on a non-1 domain (fake dog)')
+    ap.add_argument('--live', action='store_true', help='command the real dog (ROS_DOMAIN_ID=%s)' % DOG_DOMAIN)
+    ap.add_argument('--sim', action='store_true',
+                    help='publish on a domain other than %s (fake dog)' % ' / '.join(NOT_FOR_TESTS))
     ap.add_argument('--config', default=None)
     ap.add_argument('--set', action='append', default=[], metavar='KEY=VALUE')
     ap.add_argument('--gait-test', choices=['ai_basic'], default=None)
@@ -61,10 +64,10 @@ def safety_check(args, env):
     dom = str(env.get('ROS_DOMAIN_ID', '0')).strip() or '0'
     if args.live and args.sim:
         return False, 2, 'choose either --live or --sim'
-    if args.live and dom != '1':
-        return False, 2, '--live needs ROS_DOMAIN_ID=1 (the dog); it is %s' % dom
-    if args.sim and dom == '1':
-        return False, 2, '--sim must not run on ROS_DOMAIN_ID=1 (that is the dog)'
+    if args.live and dom != DOG_DOMAIN:
+        return False, 2, '--live needs ROS_DOMAIN_ID=%s (the dog); it is %s' % (DOG_DOMAIN, dom)
+    if args.sim and dom in NOT_FOR_TESTS:
+        return False, 2, "--sim must not run on ROS_DOMAIN_ID=%s (a dog domain)" % dom
     if args.auto_go and not args.sim:
         return False, 2, '--auto-go is only allowed with --sim'
     if args.gait_test and not (args.live or args.sim):

@@ -3,7 +3,7 @@
 A separate process on purpose: YOLO on the dog's CPU is slow and must never stall the driver (the driver
 only reads the latest detections, rc/curtain.py). Needs ultralytics + torch on whatever machine runs it.
 
-    python3 -m rc.vision_node --model ~/best.pt            (on the dog, domain 1: publishes /rc/detections)
+    python3 -m rc.vision_node --model ~/best.pt            (on the dog, domain 61: publishes /rc/detections)
     python3 -m rc.vision_node --model best.pt --image test.jpg --dry   (no ROS: print detections of one image)
 
 Message (std_msgs/String, JSON):

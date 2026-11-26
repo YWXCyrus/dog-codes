@@ -83,7 +83,7 @@ simulator run for these). The 10 deg no-turn-while-tilted rule was removed again
 source /opt/ros/humble/setup.bash
 source ~/lite3_ws/install/setup.bash        # transfer_interfaces (MotionSimpleCMD)
 source ~/ros2_ws/install/setup.bash         # lite3_launcher (TA bring-up)
-export ROS_DOMAIN_ID=1                       # the dog
+export ROS_DOMAIN_ID=61                      # the dog (was 1 until 2026-11-27)
 
 # terminal 1 - TA bring-up without their Nav2 (twist_mux /nav_cmd_vel -> /cmd_vel, joystick, FAST-LIO):
 ros2 launch lite3_launcher lite3.launch.py navigation:=False
@@ -95,7 +95,7 @@ python3 run.py --live --set run_time_s=60      # 2) first real run: 1 min, e-sto
 python3 run.py --live               # normal run
 ```
 
-`--live` refuses to start unless `ROS_DOMAIN_ID=1` and someone subscribes `/nav_cmd_vel` (the TA
+`--live` refuses to start unless `ROS_DOMAIN_ID=61` and someone subscribes `/nav_cmd_vel` (the TA
 bring-up). Before every run: auto mode on (`lite3_auto`), stand the dog up and choose RUG general
 with the controller - start-up sends nothing to the dog.
 
@@ -210,7 +210,7 @@ FAST-LIO): `python3 tools/measure.py runs/<date_time>/bag`. Practice-day procedu
 through doorways and up to / over the stairs; then run `measure.py` and set `step_limit`,
 `lane_w`, the stair limits.
 
-## 3. Tests (PC, WSL Ubuntu-22.04, never on domain 1)
+## 3. Tests (PC, WSL Ubuntu-22.04, never on domain 61 or 1)
 ```bash
 cd /mnt/c/Users/Admin/Desktop/dog-codes/reactive-core
 bash tests/run_tests.sh                               # unit + real trial-3 frames + simulator (~2 min)
