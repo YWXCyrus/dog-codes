@@ -9,6 +9,7 @@ from rc import config
 CFG = config.load()
 L = CFG['arena_cell_m']
 SENSOR = (0.19, 0.0, 0.45)          # arena frame, height above the stance floor
+PANEL_H = 0.43                      # course panels (measured 2026-11-27)
 
 
 def plane_x(x, y0, y1, z0, z1, step=0.02):
@@ -28,7 +29,7 @@ def observe(m, P, n=3):
 
 def test_panel_on_the_border_ahead_is_a_wall():
     m = A.ArenaMap(CFG)
-    observe(m, plane_x(0.51, -0.5, 0.5, 0.0, 0.6))
+    observe(m, plane_x(0.51, -0.5, 0.5, 0.0, PANEL_H))
     assert m.state((0, 0), (1, 0)) == A.WALL
 
 
@@ -48,10 +49,17 @@ def test_hanging_cloth_open_below_is_a_curtain():
 
 def test_low_panel_with_nothing_above_is_still_a_wall_not_a_curtain():
     m = A.ArenaMap(CFG)
-    wall = plane_x(0.51, -0.5, 0.5, 0.0, 0.6)
+    wall = plane_x(0.51, -0.5, 0.5, 0.0, PANEL_H)
     far_wall = plane_x(2.5, -1.0, 1.0, 0.65, 1.0)               # seen over the panel
     observe(m, np.vstack([wall, far_wall]))
     assert m.state((0, 0), (1, 0)) == A.WALL
+
+
+def test_course_curtain_down_to_0_15_m_is_a_curtain_because_it_is_taller_than_a_panel():
+    m = A.ArenaMap(CFG)
+    cloth = plane_x(0.51, -0.5, 0.5, 0.15, 0.93)                # measured 2026-11-27: 0.15 - 0.93 m
+    observe(m, cloth)
+    assert m.state((0, 0), (1, 0)) == A.CURTAIN
 
 
 def test_twelve_placements_at_the_start_and_visits_kill_them():
@@ -84,7 +92,7 @@ def test_traversed_border_is_open_for_good():
 
 def test_camera_cue_goes_to_the_border_it_points_at_square_and_not_to_a_grazed_neighbour():
     m = A.ArenaMap(CFG)
-    observe(m, plane_x(0.51, -0.5, 0.5, 0.0, 0.6))              # a wall-like border ahead
+    observe(m, plane_x(0.51, -0.5, 0.5, 0.0, PANEL_H))              # a wall-like border ahead
     for _ in range(int(CFG['cur_cue_min'])):
         assert m.add_curtain_cue(0.0, 0.0, 0.0, 0.0) == (0, 0, 'x')
     assert m.state((0, 0), (1, 0)) == A.CURTAIN                  # floor-length curtain: wall-like + camera
@@ -95,7 +103,7 @@ def test_camera_cue_goes_to_the_border_it_points_at_square_and_not_to_a_grazed_n
 def test_snapshot_is_json_ready():
     import json
     m = A.ArenaMap(CFG)
-    observe(m, plane_x(0.51, -0.5, 0.5, 0.0, 0.6))
+    observe(m, plane_x(0.51, -0.5, 0.5, 0.0, PANEL_H))
     m.force_visit((0, 0), 0.0)
     s = m.snapshot(1.0)
     json.dumps(s)

@@ -116,13 +116,13 @@ visit_r_m: 0.40                      # cell visited = base_link within this of i
 visit_blocked_r_m: 0.80              # ... or within this when an obstacle in the cell stops it (a prop)
 seen_min_n: 30                       # floor returns inside a cell -> 'seen' (viewer)
 terrain_range_m: 1.6                 # terrain (flat / uneven / elevated) only from returns this near
-# border evidence (heights above the stance floor). Panel: MID hit. Hanging curtain: MID pass + UP hit.
+# border evidence (heights above the stance floor). Panel (0.43 m): MID hit, UP pass. Curtain (0.15-0.93 m): MID + UP hit.
 edge_range_m: 3.0
 edge_max_pts: 6000
-edge_mid_lo: 0.22
-edge_mid_hi: 0.42
-edge_up_lo: 0.62
-edge_up_hi: 0.95
+edge_mid_lo: 0.20                    # panel band: course panels are 0.43 m high (measured 2026-11-27)
+edge_mid_hi: 0.38
+edge_up_lo: 0.55                     # above the panels: only the curtain (0.15 - 0.93 m, measured) is here
+edge_up_hi: 0.85
 edge_tol_m: 0.06                     # a return within this of the border line is ON it
 edge_margin_m: 0.12                  # border ends (posts, corners) ignored
 edge_cap_per_scan: 30
@@ -131,12 +131,14 @@ edge_n_min: 12
 edge_wall_ratio: 0.60                # MID hits / (hits + passes) >= this -> WALL
 edge_open_ratio: 0.30                # <= this -> OPEN (or CURTAIN if the UP band is blocked)
 edge_curtain_up_ratio: 0.60
+edge_tall_curtain: true              # blocked in the panel band AND above the panel top -> CURTAIN (floor-length cloth)
+edge_tall_ratio: 0.30                # ... only if the hits above are >= this share of the panel-band hits (dense cloth)
 observe_hz: 2.0
 # grid snap (position + heading from the panels; rc/localize.py)
 snap: true
 snap_hz: 3.0
-snap_z_lo: 0.22                      # wall returns: height above the stance floor
-snap_z_hi: 0.60
+snap_z_lo: 0.18                      # wall returns: height above the stance floor (panels 0.43 m)
+snap_z_hi: 0.40
 snap_range_m: 2.5
 snap_max_pts: 3000
 snap_min_pts: 60

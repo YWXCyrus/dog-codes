@@ -69,6 +69,8 @@ class CellPlanner:
             e = m.edges.get(A.edge_key(a, b))
             if c['curtain'] != 'push' or (e is not None and e.result in ('rigid', 'camera_no')):
                 return None
+            if m.is_stairs(a) or m.is_stairs(b):
+                return None                                    # tall things beside the stairs: handrails, never pushed
             return 0.0 if (e is not None and e.traversed) else c['plan_curtain_cost']
         if st == A.UNKNOWN:
             return c['plan_unknown_cost']
@@ -218,6 +220,8 @@ class CellPlanner:
             if t < e.blocked_until:
                 continue
             a, b = A.edge_cells(k)
+            if m.is_stairs(a) or m.is_stairs(b):
+                continue
             for v, u in ((a, b), (b, a)):
                 if v in best and self.enterable(u, False) and not m.is_stairs(u):
                     cands.append((best[v][0], v, u, k))

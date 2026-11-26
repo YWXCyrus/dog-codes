@@ -392,15 +392,17 @@ class ArenaMap:
         nm = e.mh + e.mp
         nu = e.uh + e.up
         st = UNKNOWN
+        up_blocked = nu >= c['edge_n_min'] and e.uh / nu >= c['edge_curtain_up_ratio']
         if nm >= c['edge_n_min']:
             rb = e.mh / nm
             if rb >= c['edge_wall_ratio']:
-                st = WALL
+                # blocked in the panel band. ABOVE the panel top (0.43 m) a panel lets the rays through, the
+                # course curtain (0.15 - 0.93 m, measured 2026-11-27) does not: taller than a panel = curtain
+                # dense cloth above, not a few wall-top returns lifted by tilt noise (sim: 380 vs 12 on panels)
+                tall = up_blocked and e.uh >= c['edge_tall_ratio'] * e.mh
+                st = CURTAIN if (tall and c['edge_tall_curtain']) else WALL
             elif rb <= c['edge_open_ratio']:
-                if nu >= c['edge_n_min'] and e.uh / nu >= c['edge_curtain_up_ratio']:
-                    st = CURTAIN                      # open below, cloth above: a hanging curtain
-                else:
-                    st = OPEN
+                st = CURTAIN if up_blocked else OPEN  # open low, cloth above: a curtain hung higher
         if st == WALL and e.cue >= c['cur_cue_min'] and e.result != 'camera_no':
             st = CURTAIN                              # wall-like, but the camera says curtain
         if st != WALL and st != UNKNOWN and e.result == 'camera_yes':

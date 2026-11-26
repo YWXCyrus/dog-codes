@@ -18,7 +18,7 @@ The dog keeps its own map of the booklet arena (3 x 5 cells of 1.02 m + the fina
 
 | piece | file | what it does |
 |---|---|---|
-| arena map | `rc/arena.py` | every cell border is `wall` / `open` / `curtain` / `unknown` from lidar height bands (panel = returns ON the border at 0.22-0.42 m; hanging curtain = open below the hem, cloth at 0.62-0.95 m; camera cues). Cells: unknown / seen / visited, terrain, perception labels. The 12 possible placements of the 3 x 5 rectangle (start in the first row, any start heading) are narrowed by the visited cells -> bounds + the final cell. |
+| arena map | `rc/arena.py` | every cell border is `wall` / `open` / `curtain` / `unknown` from lidar height bands. Measured on the course (2026-11-27): panels 0.43 m, curtain 0.15-0.93 m. Panel = returns ON the border at 0.20-0.38 m and nothing above; curtain = returns on the border also at 0.55-0.85 m, above the panel top, as dense as below it; plus camera cues. Cells: unknown / seen / visited, terrain, perception labels. The 12 possible placements of the 3 x 5 rectangle (start in the first row, any start heading) are narrowed by the visited cells -> bounds + the final cell. |
 | localisation | `rc/localize.py` | arena pose = odometry body steps rotated by the gyro heading, **snapped to the panels** at 3 Hz (heading from the sharpest wall histograms, position from panel faces on the 1.02 m border lines). Sim: < 5 cm with 6 % odometry scale error, 3 % gyro error and a drifting odometry heading. |
 | planner | `rc/cellplan.py` | Dijkstra over (cell, heading): walls impossible, unknown borders a little dearer, turns cost, stairs left for last and crossed straight. Goal = the unvisited cell that starts the shortest tour of the rest (nearest neighbour + 2-opt) - no dead end left behind to come back for. Then a detected curtain (crossed once: 15 points), then the final cell. |
 | navigator | `rc/cellnav.py` | turns only near a cell centre (the turning circle fits in a cell), walks straight along the cell axis, aims at the centre line (stays in the middle of doorways), stops still for `cell_pause_s` at every new cell (perception gets a sharp picture). Blocked lane -> square up and look again -> border marked blocked + replan. Curtain border -> square up, camera question, push at 0.12 m/s with the front stop relaxed for the cloth only, touch test. Stairs cell next -> the stairs sequence below (AI Basic only from the cell before to the cell after). Final cell centre -> `FINISHED`. |
@@ -53,8 +53,9 @@ Grid-mode keys to know (all in `config.yaml`, `--set key=value`):
 | `curtain` | push | `detect` = mark only, `off` |
 | `cur_ask_camera` / `cur_probe` / `cur_probe_touch` | true / true / false | camera before a lidar-only curtain push / ask about walls in front of unreached arena cells / push them without a camera answer |
 | `stairs_grid_fallback` | true | squared up before a stairs cell and the lidar detector is not sure after `stair_wait_s`: approach on the grid anyway (else HOLD `stairs_unsure`) |
-| `edge_mid_lo..hi`, `edge_up_lo..hi` | 0.22-0.42, 0.62-0.95 | border bands (measure the real panel height and curtain hem) |
-| `snap` | true | grid snap on/off; `snap_z_lo..hi` 0.22-0.60 = panel heights used |
+| `edge_mid_lo..hi`, `edge_up_lo..hi` | 0.20-0.38, 0.55-0.85 | border bands: inside the 0.43 m panels / between the panel top and the curtain top (0.93 m) |
+| `edge_tall_ratio` | 0.30 | curtain = hits above the panel top at least this share of the panel-band hits |
+| `snap` | true | grid snap on/off; `snap_z_lo..hi` 0.18-0.40 = panel heights used |
 | `pose_src` | leg | `lio` = FAST-LIO body steps (falls back to leg) |
 
 ## 1. Run it on the dog

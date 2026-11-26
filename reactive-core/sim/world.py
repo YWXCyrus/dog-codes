@@ -151,8 +151,8 @@ def _nbrs(c):
     return [(i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)]
 
 
-def build_arena(rect, final, open_edges, curtains=(), boards=(), stairs=None, wall_h=0.6, curtain_low=0.45,
-                floor_curtains=(), props=(), L=L_CELL, t=0.05):
+def build_arena(rect, final, open_edges, curtains=(), boards=(), stairs=None, wall_h=0.43, curtain_low=0.15,
+                floor_curtains=(), props=(), L=L_CELL, t=0.05, curtain_top=0.93):
     """rect = (i0, i1, j0, j1) arena cells; final = the +1 cell (its far side open); open_edges /
     curtains = border keys without panel / with a hanging curtain (open below curtain_low);
     floor_curtains = curtains down to the floor; boards = cells with low strips (uneven terrain);
@@ -178,7 +178,7 @@ def build_arena(rect, final, open_edges, curtains=(), boards=(), stairs=None, wa
                     x0, y0, x1, y1 = edge_segment(k, L)
                     z0 = 0.02 if k in floor_curtains else curtain_low
                     cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-                    w.add(Box(cx, cy, L - 0.06, 0.03, z0, 1.0, math.atan2(y1 - y0, x1 - x0), 'curtain'))
+                    w.add(Box(cx, cy, L - 0.06, 0.03, z0, curtain_top, math.atan2(y1 - y0, x1 - x0), 'curtain'))
                 continue
             if c == final and not inside:
                 # the final cell: walls on its sides, its far side (towards the drone target) open

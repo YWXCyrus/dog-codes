@@ -36,6 +36,7 @@ def run_one(args):
     ap = core.apose(res.t_end)
     err = math.hypot(ap[0] - ex, ap[1] - ey) if ap else None
     wrong = 0
+    bad = []
     for k, e in core.amap.edges.items():
         if e.state == A.UNKNOWN:
             continue
@@ -48,12 +49,14 @@ def run_one(args):
         if truth == 'curtain' and st == 'open' and e.traversed:
             st = 'curtain'
         wrong += st != truth
+        if st != truth:
+            bad.append((k, st, truth, [round(v) for v in (e.mh, e.mp, e.uh, e.up)], round(e.cue, 1), e.result))
     holds = [e['hold'] for e in res.events if 'hold' in e]
     cur = [e['curtain'] for e in res.events if 'curtain' in e]
     out = {'name': name, 'cells': '%d/%d' % (len(vis & cells), len(cells)), 'missing': sorted(cells - vis),
            'finished': res.finished, 'in_final': in_final, 't': round(res.t_end), 'coll': res.collisions,
            'rev': res.reversed, 'err': None if err is None else round(err, 2), 'wrong_edges': wrong,
-           'holds': holds, 'curtain': cur, 'stairs': [e['stairs'] for e in res.events if 'stairs' in e][-1:],
+           'holds': holds, 'curtain': cur, 'bad': bad, 'stairs': [e['stairs'] for e in res.events if 'stairs' in e][-1:],
            'wall_s': round(time.time() - t0)}
     if verbose:
         out['log'] = [e for e in res.events if set(e) & {'plan', 'grid', 'grid_block', 'grid_fail', 'curtain', 'hold',
@@ -81,6 +84,8 @@ def main():
         print('%-4s %-14s cells %-6s fin %-5s inF %-5s t %4s coll %d err %s wrongE %d holds %s curtain %s stairs %s missing %s (%ss)' % (
             'ok' if ok else 'FAIL', r['name'], r['cells'], r['finished'], r['in_final'], r['t'], r['coll'], r['err'],
             r['wrong_edges'], r['holds'], r['curtain'][-3:], r['stairs'], r['missing'], r['wall_s']))
+        if r.get('bad') and a.v:
+            print('       WRONG BORDERS', r['bad'])
         for e in r.get('log', []):
             print('      ', str(e)[:190])
     return 1 if bad else 0

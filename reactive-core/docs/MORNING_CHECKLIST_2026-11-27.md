@@ -20,10 +20,11 @@ Enter, then **drive the dog by controller** through 4-6 cells of the practice ar
 - [ ] the dog's arrow moves with the dog and stays in the right cell; the status line `pos (x, y)` matches
       the cell (cell centres are multiples of 1.02 m). If the pose drifts or jumps by a cell: grid snap is
       fooled -> try `--set snap=false` and compare; tell me what the panels look like (height, gaps).
-- [ ] borders turn **solid** for panels and disappear for openings. Wrong ones: measure the **panel height**
-      and set `edge_mid_lo/hi` + `snap_z_lo/hi` inside it (now 0.22-0.42 / 0.22-0.60 m above the floor).
-- [ ] the **curtain** border shows **dashed** (cloth hanging from ~1 m, open below). If it shows solid: measure
-      the hem height; the lidar rule needs `edge_mid_hi` below the hem. Else the camera has to say so.
+- [ ] borders turn **solid** for panels and disappear for openings. Measured: panels 0.43 m, curtain
+      0.15-0.93 m (bands set for that: panel band 0.20-0.38, above-panel band 0.55-0.85, snap 0.18-0.40).
+- [ ] the **curtain** border shows **dashed**: the lidar sees it as TALLER than a panel. If it stays solid,
+      `--set edge_tall_ratio=0.15`; if real panels turn dashed, `--set edge_tall_ratio=0.5` (or `edge_tall_curtain=false`
+      and rely on the camera).
 - [ ] the viewer page itself renders (it was written blind: only checked by script, never in a browser).
 - [ ] `ros2 topic echo /rc/odom --once` gives the arena pose; no Python tracebacks in terminal 2.
 
