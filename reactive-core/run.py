@@ -213,11 +213,24 @@ def main(argv=None):
     dt = 1.0 / cfg['cmd_rate_hz']
     rc_exit = 0
 
+    disk = {'ok': True}
+
+    def safe_write(f, line):
+        """Logging must never stop the dog: a full disk (2026-11-26, the ros2 bags filled it) only ends the logs."""
+        if not disk['ok']:
+            return
+        try:
+            f.write(line)
+            f.flush()
+        except OSError as e:
+            disk['ok'] = False
+            print('\nWARNING: logging stopped (%s) - the run goes on. Free space: delete runs/*/bag, '
+                  'run with --no-record.\n' % e)
+
     def log(obj):
         obj = dict(obj)
         obj.setdefault('t', round(time.monotonic() - t0, 2))
-        dec.write(json.dumps(obj, separators=(',', ':')) + '\n')
-        dec.flush()
+        safe_write(dec, json.dumps(obj, separators=(',', ':')) + '\n')
 
     try:
         if args.live:
@@ -338,8 +351,7 @@ def main(argv=None):
                 last_snap_t = t
                 with io.lock:
                     snap = registry.snapshot()        # same format as the live viewer: replayable
-                snaps.write(json.dumps(snap, separators=(',', ':')) + '\n')
-                snaps.flush()
+                safe_write(snaps, json.dumps(snap, separators=(',', ':')) + '\n')
                 io.publish_status(st)
             stale = [k for k, a in ages.items() if a > 2.0]
             # after a STOP the dog collapses (knees like sitting) or its feed dies. 'unclear' is NOT
@@ -370,8 +382,11 @@ def main(argv=None):
                 viewer.shutdown()
             except Exception:
                 pass
-        dec.close()
-        snaps.close()
+        for f in (dec, snaps):
+            try:
+                f.close()
+            except OSError:
+                pass
         try:
             node.destroy_node()
             rclpy.try_shutdown()
