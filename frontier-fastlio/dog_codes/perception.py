@@ -384,7 +384,9 @@ class Perception(Node):
         x = pose[0] + rng * math.cos(wa)
         y = pose[1] + rng * math.sin(wa)
         lk = self.look_now()
-        if lk is not None:                     # looked at from the doorway: the sign is in that room
+        # a scene look (look >= 0): the sign is in that room. The plain view cell (look -1, along the heading)
+        # only when the sign is near the middle of the picture
+        if lk is not None and (lk[1] >= 0 or abs(bearing) < math.radians(20.0)):
             x, y = C.cell_centre(lk[0])
         pos = C.snap_to_cell_centre(x, y)
         cell = C.cell_of(x, y)
@@ -537,7 +539,9 @@ class Perception(Node):
                 continue
             self.fail_n = 0
             if job['kind'] == 'stairs':
-                yes = bool(res['relevant']) or PC.stairs_in_result(res)
+                # the VLM's own yes/no only: its prompt already rules out ramps / boxes / flat floor. The word
+                # check counted "No distinct stair treads are visible" as yes (live 093607: boards -> stairs)
+                yes = bool(res['relevant'])
                 if yes:
                     self.note_stairs(job['pose'], 'vlm', res['conf'])
                 self.ans_pub.publish(C.jmsg({'id': job['id'], 'kind': 'stairs', 'answer': yes, 'src': 'vlm',

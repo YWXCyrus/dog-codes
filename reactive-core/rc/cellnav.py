@@ -517,7 +517,8 @@ class CellNav:
         c, m, t = self.c, self.m, ni.t
         if c['stairs'] != 'climb' or m.is_stairs(nxt):
             return False
-        if ni.stairs_cue is not None:
+        # a single raised level ('unsure': one board, a platform) is not proof of stairs: ask the camera instead
+        if ni.stairs_cue is not None and ni.stairs_cue.get('src') != 'lidar_unsure':
             if m.mark_stairs(nxt, ni.stairs_cue['src']):
                 self._ev(t, grid='stairs in %s (%s)' % (nxt, ni.stairs_cue['src']), stairs_cell=list(nxt))
                 self._set('PLAN', t)
@@ -721,8 +722,15 @@ class CellNav:
         m.force_visit(cell, t)                    # counts for the tour and the 3 x 5 bounds ...
         self.paused.add(cell)
         m.set_label(cell, 'look', s['kind'])
+        # the planner never walks in, not even through a fence side the ray test still calls UNKNOWN (it would plan
+        # through the room to the cells behind it): the doorway - unless the dog stands in the room - and every
+        # closed side are impassable for good
         if m.cell_of(ni.apose[0], ni.apose[1]) != tuple(cell):
-            m.block(cur, cell, t, 1e9)            # ... but the planner never walks in (unless the dog stands in it)
+            m.block(cur, cell, t, 1e9)
+        for d in A.DIRS:
+            n = A.step(cell, d)
+            if n != tuple(cur) and m.side_closed(cell, n):
+                m.block(cell, n, t, 1e9)
         self._ev(t, grid='%s %s looked at from %s - not entered' % (s['kind'], cell, cur), scene_done=list(cell),
                  answered=s['answered'])
         self._set('PLAN', t)

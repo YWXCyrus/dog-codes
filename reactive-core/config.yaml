@@ -193,9 +193,14 @@ grid_back_give_up_s: 2.5             # the guard passed a reverse this long and 
 grid_reverse: false                  # true: a target straight behind over walked ground is reached backwards (off 2026-11-26: the real dog did not move backwards at -0.12 m/s, run 093607)
 grid_reverse_max_m: 1.10             # ... (this cell's centre, or the previous cell's when the plan goes back) up to this far
 grid_reverse_cone_deg: 20.0          # ... only when it lies within this of straight behind; else turn round
-# scene rooms (branch integrated): a cell with WALL on its three other sides is looked at from the doorway, never entered
+# scene rooms (branch integrated): a cell whose three other sides are closed is looked at from the doorway, never entered
 scene_look: true                     # false = drive into them as before
-scene_prop_h_lo: 0.25                # props inside the cell: returns this high above the floor (above rubble 0.22) ...
+scene_cover_min: 0.60                # a side is closed when this share of its length shows obstacle returns (fence walls leak rays;
+                                     # live 093607: room sides 1.00, openings 0.00-0.12, walls 0.62-0.88) - or the ray test says WALL
+scene_cover_hits: 2                  # ... a 10 cm bin counts after this many returns
+scene_cover_tol_m: 0.10              # ... returns this near the border line
+scene_cover_bin_m: 0.10
+scene_prop_h_lo: 0.45                # props inside the cell: returns this high above the floor - above the wooden boards ...
 scene_prop_h_hi: 1.20
 scene_prop_min: 40                   # ... at least this many -> 'scene' (front + side looks), else 'dead_end' (front look only)
 scene_look_s: 3.0                    # front look: at least this long ...
@@ -204,6 +209,10 @@ scene_side_deg: 45.0                 # side looks for the QR (nearer half of a s
 scene_side_s: 3.0
 scene_max_s: 45.0                    # the whole look, at most
 look_cell_topic: /rc/look_cell       # out: the cell looked at (perception uses it for the scene / QR / survivor cell)
+view_cell: true                      # also outside scene looks: the cell the camera looks into (map + free distance ahead) on /rc/look_cell
+view_max_m: 2.0                      # ... at most this far
+view_lane_w: 0.30                    # ... free distance straight ahead in a lane this wide (+0.3 m) caps it
+say: true                            # terminal: one '>> ...' line for everything the dog does (cells only)
 cur_last: true                       # curtains only after every cell reachable without one is visited (then cells behind + the 15 points, then the final cell)
 cur_detour: 3.0                      # a detected curtain is crossed once if its near side costs at most this (or nothing else is left); <0 = never
 cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)

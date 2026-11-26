@@ -13,7 +13,7 @@ import numpy as np
 from rc import geometry as G
 from rc import lanes as L
 from rc import posture as P
-from rc.arena import ArenaMap
+from rc.arena import ArenaMap, yaw_dir
 from rc.attitude import Attitude
 from rc.camcues import DetectionPersist
 from rc.cellnav import CellNav
@@ -179,6 +179,7 @@ class Core:
         if use_map:
             self.lio.add(xs, t)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
+        self._stairs_seen_event(t)
         self._grid_cloud(p, t)
         dt_ms = (time.perf_counter() - t_cpu) * 1000.0
         self.cpu['cloud'] = 0.8 * self.cpu.get('cloud', dt_ms) + 0.2 * dt_ms
@@ -240,6 +241,35 @@ class Core:
         sx, sy, sz = level_points(np.zeros((1, 3)), self.mount, self.att.roll, self.att.pitch)[0]
         S = (ap[0] + cs * sx - sn * sy, ap[1] + sn * sx + cs * sy, sz - self.floor_z)
         self.amap.observe(P_, S, t)
+        # scene test: how much of each side shows the driving detector's obstacle returns (fence walls leak rays)
+        ob = self._off_body(self.scan.obs)
+        if ob.shape[0]:
+            self.amap.observe_cover(np.column_stack([ap[0] + cs * ob[:, 0] - sn * ob[:, 1],
+                                                     ap[1] + sn * ob[:, 0] + cs * ob[:, 1]]))
+
+    def _view_look(self, ap):
+        """Grid mode without a scene look: the cell the camera looks into - along the heading on the arena map,
+        up to the first wall, capped by the free distance straight ahead (+0.3 m) and view_max_m. -> /rc/look_cell
+        (look -1): perception files its results there instead of at a fixed 1 m ahead."""
+        if ap is None or self.driver.nav is None or not self.c['view_cell']:
+            return None
+        front = L.free_distance(self._off_body(self.scan.obs_now), 0.0, self.c['view_lane_w'],
+                                dmax=self.c['view_max_m'])
+        cl = self.amap.view_cell(ap[0], ap[1], ap[2], min(self.c['view_max_m'], front + 0.30))
+        return {'cell': list(cl), 'look': -1, 'kind': 'view'}
+
+    def _stairs_seen_event(self, t):
+        """An event when the lidar stairs detector starts seeing stairs (or becomes sure): for the messages."""
+        st = self.stairs
+        key = (st.kind, bool(st.confident)) if st.kind in ('up', 'unsure') else None
+        if self.t_go is None or key is None:
+            self._stairs_key = None
+            return
+        if key != getattr(self, '_stairs_key', None) and t - getattr(self, '_stairs_ev_t', -1e9) > 3.0:
+            self._stairs_ev_t = t
+            self.pending_events.append({'t': round(t, 2), 'stairs_seen': st.kind, 'confident': bool(st.confident),
+                                        'edge': round(st.edge_x, 2), 'src': 'lidar'})
+        self._stairs_key = key
 
     # ---- perception inputs (std_msgs/String JSON, see perception/README.md)
     def on_detections(self, dets, t):
@@ -249,6 +279,28 @@ class Core:
     def on_mission_status(self, st, t):
         self.mission, self.mission_t = st, t
         m = self.amap
+        # newly reported tasks / QR text -> events (messages)
+        try:
+            seen = getattr(self, '_reported', {})
+            for tid, tk in sorted((st.get('tasks') or {}).items()):
+                if not tk.get('reported'):
+                    continue
+                pos = tk.get('pos')
+                cell = list(m.cell_of(float(pos[0]), float(pos[1]))) if pos else None
+                key = (tk.get('label') or '', tk.get('scene') or tk.get('scene_type') or '', str(cell),
+                       tk.get('message') or '')
+                if seen.get(tid) != key:
+                    seen[tid] = key
+                    self.pending_events.append({'t': round(t, 2), 'report': tid, 'type': tk.get('type') or '',
+                                                'label': key[0], 'scene': key[1], 'cell': cell,
+                                                'message': key[3][:60]})
+            self._reported = seen
+            qr = st.get('qr') or {}
+            if qr.get('read') and qr.get('text') and qr.get('text') != getattr(self, '_qr_text', None):
+                self._qr_text = qr.get('text')
+                self.pending_events.append({'t': round(t, 2), 'qr_decoded': qr.get('text')[:80]})
+        except (TypeError, ValueError, AttributeError, IndexError):
+            pass
         try:
             for key, scene in (st.get('scenes') or {}).items():
                 i, j = (int(v) for v in str(key).split(','))
@@ -268,6 +320,13 @@ class Core:
 
     def on_quad_event(self, ev, t):
         self.qevents = (self.qevents + [dict(ev, rt=round(t, 2))])[-12:]
+        typ = ev.get('type')
+        if typ in ('survivor_seen', 'qr_seen', 'stairs_seen', 'hazard_seen'):
+            last = getattr(self, '_qev_t', {})
+            if t - last.get(typ, -1e9) > 5.0:                    # qr_seen comes with every frame: once per 5 s
+                last[typ] = t
+                self._qev_t = last
+                self.pending_events.append({'t': round(t, 2), 'perception': typ, 'cell': ev.get('cell')})
 
     def on_vlm_answer(self, ans, t):
         self.answers.append(ans)
@@ -305,7 +364,10 @@ class Core:
             return {'bearing': sd['bearing'], 'src': 'camera'}
         st = self.stairs
         if st.kind in ('up', 'unsure') and st.edge_x < 1.6 and abs(st.heading) < math.radians(25.0):
-            return {'bearing': st.heading, 'src': 'lidar_' + st.kind}
+            # only a confident 'up' (stair_persist scans) is stairs by itself; one scan / one raised level is a
+            # question for the camera (live 2026-11-26: wooden boards in the uneven-terrain cells)
+            sure = st.kind == 'up' and st.confident
+            return {'bearing': st.heading, 'src': 'lidar_up' if sure else 'lidar_unsure'}
         return None
 
     def _grid_cues(self, t, ap):
@@ -441,7 +503,7 @@ class Core:
             self.cpu['tick_max'] = max(self.cpu.get('tick_max', 0.0) * 0.98, dt_ms)
             if out.ask is not None:
                 self.pending_asks.append(out.ask)
-            self.pending_look = out.look
+            self.pending_look = out.look or self._view_look(ap)
             self.drive_out = out
             self.drive_cmd = out.cmd
             codes.extend(out.codes)
@@ -462,6 +524,10 @@ class Core:
         head = None
         if self.grid.origin is not None and self.odom.pose is not None:
             head = self.grid.heading_dir(self.odom.pose[2])
+        ap = self.apose(t) if (self.c['nav_mode'] == 'grid' and self.started) else None
+        if ap is not None:
+            # grid mode: one coordinate system everywhere - the arena cell (+x start heading, +y left)
+            cell, head = self.amap.cell_of(ap[0], ap[1]), yaw_dir(ap[2])
         front = L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w'])
         return {
             'mode': d.mode, 'phase': d.phase, 'hold': d.hold_reason,

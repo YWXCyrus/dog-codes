@@ -250,11 +250,13 @@ class Driver:
             new = self.grid.update(di.pose)
             if new is not None:
                 self.last_new_cell_t = t
-                self._ev(t, cell=list(new))
+                if self.nav is None:                # grid mode logs arena cells only (core: arena_cell)
+                    self._ev(t, cell=list(new))
         if t - self.last_new_cell_t > c['side_switch_s']:
             self.side = -self.side
             self.last_new_cell_t = t
-            self._ev(t, wall_side='left' if self.side > 0 else 'right')
+            if self.nav is None:
+                self._ev(t, wall_side='left' if self.side > 0 else 'right')
 
         # run timer: never in the middle of the stairs (waits until they are done or abandoned)
         on_stairs = self.mode == STAIRS and self.phase not in ('LOOK', 'APPROACH')

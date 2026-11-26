@@ -197,7 +197,9 @@ def main(argv=None):
     from rc.gait import ENTER_AI, EXIT_AI, GaitSequencer
     from rc.guard import Cmd
     from rc.rosio import RosIO
+    from rc.say import Say
     from rc.startup import Startup
+    say = Say()                                       # '>> ...': one plain line for everything the dog does
 
     rclpy.init()
     node = rclpy.create_node('reactive_core')
@@ -340,6 +342,9 @@ def main(argv=None):
                           % (st.get('acell'),))
                 elif 'hold' in e:
                     print('\n*** HOLD: %s - the Captain may drive by controller; press Enter to resume ***\n' % e['hold'])
+                elif cfg['say']:
+                    for ln in say.lines(e):
+                        print('>> ' + ln)
                 elif 'cell' not in e and 'arena_cell' not in e and 'vlm_answer' not in e:
                     print('event: %s' % json.dumps(e))
             if out.guard:

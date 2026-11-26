@@ -75,10 +75,27 @@ class DetectionPersist:
         return self.last_msg_t is not None and t - self.last_msg_t <= max_age_s
 
 
+NEGATIONS = ('no ', 'not ', 'without ', "n't ", 'none ', 'nor ', 'absent', 'lack')
+
+
+def _negated(txt, i):
+    """A stairs word at txt[i] inside a denial: 'no distinct stair treads', 'there are not any stairs',
+    'without stairs' - a negation word earlier in the same clause (up to 40 characters back)."""
+    start = max(txt.rfind('.', 0, i), txt.rfind(',', 0, i), txt.rfind(';', 0, i), i - 40, -1) + 1
+    clause = ' ' + txt[start:i]
+    return any(n in clause for n in NEGATIONS)
+
+
 def stairs_in_result(res):
-    """res: scene_client.parse_result dict -> True if the answer names stairs."""
-    txt = (str(res.get('desc', '')) + ' ' + ' '.join(map(str, res.get('evidence', [])))).lower()
-    return any(w in txt for w in STAIRS_WORDS)
+    """res: scene_client.parse_result dict -> True if the answer names stairs (not when it denies them)."""
+    txt = (str(res.get('desc', '')) + ' . ' + ' . '.join(map(str, res.get('evidence', [])))).lower()
+    for w in STAIRS_WORDS:
+        i = txt.find(w)
+        while i >= 0:
+            if not _negated(txt, i):
+                return True
+            i = txt.find(w, i + 1)
+    return False
 
 
 def mission_status(mission, best, qr_text=None, qr_seen_recent=False, m05_hint='', survivor_cells=(),

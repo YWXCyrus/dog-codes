@@ -84,6 +84,7 @@ class Edge:
     blocked_n: int = 0
     state: str = UNKNOWN
     was_curtain: bool = False
+    cov: object = None       # obstacle returns per bin along the border (scene test: fence walls leak rays)
 
 
 @dataclass
@@ -485,20 +486,89 @@ class ArenaMap:
     def is_stairs(self, c):
         return c in self.cells and self.cells[c].stairs
 
+    # ------------------------------------------------------------------ scene test: closed sides by coverage
+    def _cover_bins(self):
+        usable = self.L - 2.0 * self.c['edge_margin_m']
+        return max(1, int(round(usable / self.c['scene_cover_bin_m']))), usable
+
+    def observe_cover(self, XY):
+        """Obstacle returns (arena frame, x/y only; the driving detector's points: height above the LOCAL ground,
+        so boards on the floor are not in them) near a border line fill that border's bins. The course walls are
+        fences (posts + boards): rays leak through the gaps, so the scene test asks how much of a side's length
+        shows returns, not how many rays were stopped (live 093607: room sides at 0.40-0.52 hit share = UNKNOWN,
+        coverage 1.00)."""
+        XY = np.asarray(XY, dtype=float).reshape(-1, 2)
+        if XY.shape[0] == 0:
+            return
+        L, tol, marg = self.L, self.c['scene_cover_tol_m'], self.c['edge_margin_m']
+        nb, usable = self._cover_bins()
+        bin_m = usable / nb
+        for ax in ('x', 'y'):
+            u, v = (XY[:, 0], XY[:, 1]) if ax == 'x' else (XY[:, 1], XY[:, 0])   # u across the line, v along it
+            k = np.round(u / L - 0.5).astype(np.int64)                         # line at (k + 0.5) L
+            near = np.abs(u - (k + 0.5) * L) < tol
+            cell = np.round(v / L).astype(np.int64)
+            a = v - cell * L + 0.5 * L - marg                                  # 0 .. usable along the border
+            ok = near & (a >= 0.0) & (a < usable)
+            if not ok.any():
+                continue
+            b = np.minimum(nb - 1, np.floor(a[ok] / bin_m).astype(np.int64))
+            for kk, cc, bb in zip(k[ok].tolist(), cell[ok].tolist(), b.tolist()):
+                e = self.edge((kk, cc, 'x') if ax == 'x' else (cc, kk, 'y'))
+                if e.cov is None:
+                    e.cov = np.zeros(nb)
+                e.cov[bb] = min(1000.0, e.cov[bb] + 1.0)
+
+    def cover(self, a, b):
+        """Share (0..1) of the border's length between cells a and b that showed obstacle returns."""
+        e = self.edges.get(edge_key(a, b))
+        if e is None or e.cov is None:
+            return 0.0
+        return float(np.count_nonzero(e.cov >= self.c['scene_cover_hits'])) / e.cov.size
+
+    def side_closed(self, a, b):
+        """Scene test: the side between a and b is closed (a WALL, or a fence seen along most of its length)."""
+        e = self.edges.get(edge_key(a, b))
+        if e is not None and e.traversed:
+            return False
+        if e is not None and e.state == WALL:
+            return True
+        return self.cover(a, b) >= self.c['scene_cover_min']
+
     def scene_kind(self, c, door_from):
-        """A cell looked at from the doorway and never entered (2026-11-26): its three borders other than the
-        one towards `door_from` are all WALL. With props inside (lidar returns at scene_prop_h_lo..hi, at least
-        scene_prop_min of them) it is a 'scene' room, without a 'dead_end'. None otherwise (also when visited,
-        stairs, or a border not seen yet: then the dog drives as before)."""
+        """A cell looked at from the doorway and never entered (2026-11-26): its three sides other than the one
+        towards `door_from` are all closed (side_closed). With props inside (lidar returns at scene_prop_h_lo..hi,
+        above any board, at least scene_prop_min of them) it is a 'scene' room, without a 'dead_end'. None
+        otherwise (also when visited, stairs, or a side not seen closed yet: then the dog drives as before)."""
         c, door_from = tuple(c), tuple(door_from)
         d_door = dir_between(c, door_from)
         if d_door is None or self.visited(c) or self.is_stairs(c):
             return None
         for d in DIRS:
-            if d != d_door and self.state(c, step(c, d)) != WALL:
+            if d != d_door and not self.side_closed(c, step(c, d)):
                 return None
         cl = self.cells.get(c)
         return 'scene' if cl is not None and cl.prop_n >= self.c['scene_prop_min'] else 'dead_end'
+
+    def view_cell(self, x, y, yaw, dmax):
+        """The cell the camera looks into: along the heading from (x, y), through borders that are not WALL /
+        CURTAIN, at most dmax; the last cell before the first closed border (the dog's own cell when one is
+        right ahead). For perception's reports (its own guess is a fixed 1 m ahead)."""
+        cs, sn = math.cos(yaw), math.sin(yaw)
+        cur = self.cell_of(x, y)
+        d = 0.05
+        while d <= dmax + 1e-9:
+            nxt = self.cell_of(x + d * cs, y + d * sn)
+            if nxt != cur:
+                k = edge_key(cur, nxt)
+                if k is None:
+                    return cur                                   # through a corner: stay with the last cell
+                e = self.edges.get(k)
+                if e is not None and e.state in (WALL, CURTAIN) and not e.traversed:
+                    return cur
+                cur = nxt
+            d += 0.05
+        return cur
 
     def set_label(self, c, key, value):
         self.cell(c).labels[key] = value
@@ -540,9 +610,11 @@ class ArenaMap:
         for k, e in sorted(self.edges.items()):
             if e.state == UNKNOWN and e.mh + e.mp + e.uh + e.up < 3:
                 continue
+            a, b = edge_cells(k)
             edges.append({'k': [k[0], k[1], k[2]], 'state': e.state, 'trav': e.traversed,
                           'res': e.result, 'blocked': t < e.blocked_until,
-                          'ev': [round(e.mh), round(e.mp), round(e.uh), round(e.up)], 'cue': round(e.cue, 1)})
+                          'ev': [round(e.mh), round(e.mp), round(e.uh), round(e.up)], 'cue': round(e.cue, 1),
+                          'cov': round(self.cover(a, b), 2)})
         return {'L': self.L, 'cells': cells, 'edges': edges,
                 'bounds': {'known': self.bounds_known(), 'lost': self.no_bounds,
                            'rects': [list(h['rect']) for h in lv],

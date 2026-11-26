@@ -112,3 +112,15 @@ def test_look_cell_used_only_while_fresh():
     assert PC.fresh_look(lk, 11.0, 1.5) == lk
     assert PC.fresh_look(lk, 11.6, 1.5) is None
     assert PC.fresh_look(None, 11.0, 1.5) is None
+
+
+def test_stairs_words_in_a_denial_are_not_stairs():
+    # live 093607: the boards were called stairs because the answer contained "stair"
+    no = ["wooden wedge-shaped ramps are ahead on a flat floor. No distinct stair treads are visible",
+          "a cleaning trolley stands ahead against a partition. there are no stairs",
+          "flat floor, not a staircase, a box ahead", "a corridor without stairs"]
+    yes = ["metal checker-plate steps going up between handrails", "a staircase with a handrail directly ahead",
+           "stairs ahead, two steps up to a platform"]
+    assert not any(PC.stairs_in_result({'desc': d, 'evidence': []}) for d in no)
+    assert all(PC.stairs_in_result({'desc': d, 'evidence': []}) for d in yes)
+    assert PC.stairs_in_result({'desc': 'a room', 'evidence': ['steps going up on the left']})

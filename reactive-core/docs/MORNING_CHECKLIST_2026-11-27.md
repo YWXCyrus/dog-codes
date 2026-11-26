@@ -7,9 +7,14 @@ Use `git checkout integrated` instead of `grid-nav` in A1. grid-nav itself ran l
 - [ ] **Feed stalls**: runs 26 Nov had up to ~1 s old feeds (all four at once) while reactive-core used <= 33 ms
       per tick. Dry run with `top` open; then try `--set lio_restart=false` with no FAST-LIO running (grid mode
       does not use it). Compare the `stale:` guard lines in `decisions.jsonl`.
-- [ ] **Scene look** (dry run, dog walked by hand to the cell in front of a scene room): `decisions.jsonl` shows
-      `scene ... kind scene` (or `dead_end`); `ros2 topic echo /rc/look_cell` shows the room's cell. Live: the dog
-      stops at the cell in front, looks ahead, 45 deg left, 45 deg right, and never walks in.
+- [ ] **Scene look** (dry run, dog walked by hand to the cell in front of a scene room): terminal 2 prints
+      `>> scene detected (i,j): looking from the doorway` (or `dead end`), then `>> <scene label>, (i,j)`;
+      `ros2 topic echo /rc/look_cell` shows the room's cell. Live: the dog stops at the cell in front, looks ahead,
+      45 deg left, 45 deg right, and never walks in.
+- [ ] **Messages**: every `>> ...` line in terminal 2 is one thing the dog did (cells only, forward = (1,0), right = (1,-1)).
+      `--set say=false` goes back to the raw `event: {...}` lines.
+- [ ] **Wooden boards**: the dog drives over them; no `>> stairs confirm` for them. If the camera is asked, expect
+      `>> not stairs (i,j) (camera)`.
 - [ ] Perception: plain `ros2 launch ~/dog-codes/perception/perception.launch.py arena:=A` (odom now defaults to /rc/odom).
 
 Everything below was built and tested overnight **in the simulator only** (no ROS on the build PC, no dog).
