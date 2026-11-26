@@ -367,10 +367,12 @@ class ArenaMap:
         off = P[:, :2] - ij * L
         inner = (np.abs(off[:, 0]) < 0.38 * L) & (np.abs(off[:, 1]) < 0.38 * L)
         h = P[:, 2]
+        # terrain only from near returns: 2 deg of walking wobble is +-7 cm of height at 2 m
+        near = (P[:, 0] - sx) ** 2 + (P[:, 1] - sy) ** 2 <= self.c['terrain_range_m'] ** 2
         for name, m in (('floor_n', inner & (np.abs(h) < 0.10)),
-                        ('flat_n', inner & (np.abs(h) < 0.03)),
-                        ('raised_n', inner & (h >= 0.04) & (h <= 0.22)),
-                        ('high_n', inner & (h >= 0.25) & (h <= 0.60))):
+                        ('flat_n', inner & near & (np.abs(h) < 0.04)),
+                        ('raised_n', inner & near & (h >= 0.06) & (h <= 0.22)),
+                        ('high_n', inner & near & (h >= 0.25) & (h <= 0.60))):
             if not m.any():
                 continue
             keys, cnt = np.unique(ij[m], axis=0, return_counts=True)
@@ -453,12 +455,22 @@ class ArenaMap:
             return ''
         if cl.high_n / n > 0.30:
             return 'elevated'
-        if cl.raised_n / n > 0.20:
+        if cl.raised_n / n > 0.30:
             return 'uneven'
         return 'flat'
 
     def mark_stairs(self, c, src):
+        """Mark a stairs cell. The stairs are ONE straight run (booklet: 2-3 steps up, platform, 2-3 down): a new
+        cell must be in line with and next to the cells already marked (else it is refused)."""
+        c = (int(c[0]), int(c[1]))
         cl = self.cell(c)
+        have = [k for k, v in self.cells.items() if v.stairs]
+        if have and not cl.stairs and src != 'crossed':
+            nb = any(abs(c[0] - h[0]) + abs(c[1] - h[1]) == 1 for h in have)
+            line = all(h[0] == c[0] for h in have) or all(h[1] == c[1] for h in have)
+            if not (nb and line):
+                self.events.append({'arena': 'stairs mark refused for %s (%s): not in line with %s' % (c, src, have)})
+                return False
         if not cl.stairs:
             cl.stairs, cl.stairs_src = True, src
             return True

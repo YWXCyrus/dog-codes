@@ -45,6 +45,10 @@ class GridLocalizer:
         self.prev = {}                       # source name -> last source pose
         self.src = None                      # active source name
         self.jumps = 0
+        self.step_mode = 'odom'              # odom: steps split with the source's own yaw | forward: |step| along the heading
+        self.turn_g = 0.0                    # gyro / source yaw turned (rad), for the source-yaw check
+        self.turn_s = 0.0
+        self.events = []
         self.last_t = -1e9
         self.n_snaps = 0
         self.last = {}                       # what the last update saw (status / viewer)
@@ -67,21 +71,41 @@ class GridLocalizer:
             return None
         return self.x, self.y, self.yaw(heading)
 
-    def feed(self, name, src, heading):
+    def feed(self, name, src, heading, vx_cmd=None):
         """One pose of source `name` (x, y, its own yaw). Only the active source moves the dog."""
         if not self.started or src is None:
             return
         if name != self.src:
             self.src = name
             self.prev[name] = tuple(src)              # a new source starts from here: no jump
+            self._ph = heading
             return
         p = self.prev.get(name)
         self.prev[name] = tuple(src)
         if p is None:
             return
+        # source-yaw check: while the gyro turns, the source's own yaw must follow (a frozen / lagging
+        # odometry yaw would split the steps wrongly) - else forward-only steps along the gyro heading
+        ph = getattr(self, '_ph', heading)
+        self._ph = heading
+        if heading is not None and ph is not None:
+            self.turn_g += abs(G.wrap(heading - ph))
+            self.turn_s += abs(G.wrap(src[2] - p[2]))
+            if self.turn_g > math.radians(120.0):
+                if self.step_mode == 'odom' and self.turn_s < 0.5 * self.turn_g and self.c['loc_step'] == 'auto':
+                    self.step_mode = 'forward'
+                    self.events.append('the %s yaw turned %.0f deg while the gyro turned %.0f: forward-only steps'
+                                       % (name, math.degrees(self.turn_s), math.degrees(self.turn_g)))
+                self.turn_g = self.turn_s = 0.0
         dx, dy = src[0] - p[0], src[1] - p[1]
-        c, s = math.cos(p[2]), math.sin(p[2])
-        fwd, lat = c * dx + s * dy, -s * dx + c * dy
+        if self.step_mode == 'forward' or self.c['loc_step'] == 'forward':
+            # the dog never walks sideways: the step length along the heading, signed by the command
+            d = math.hypot(dx, dy)
+            sgn = -1.0 if (vx_cmd is not None and vx_cmd < -0.01) else 1.0
+            fwd, lat = (sgn * d if vx_cmd is None or abs(vx_cmd) > 0.01 else 0.0), 0.0
+        else:
+            c, s = math.cos(p[2]), math.sin(p[2])
+            fwd, lat = c * dx + s * dy, -s * dx + c * dy
         if math.hypot(fwd, lat) > self.c['loc_jump_m']:
             self.jumps += 1                          # a jump in the source: not a motion
             return

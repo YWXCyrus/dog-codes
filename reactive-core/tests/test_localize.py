@@ -82,3 +82,22 @@ def test_source_switch_has_no_jump():
     assert loc.pose(0.0) == before
     loc.feed('lio', (100.0 + 0.1 * math.cos(2.0), -3.0 + 0.1 * math.sin(2.0), 2.0), 0.0)
     assert abs(loc.pose(0.0)[0] - before[0] - 0.1) < 1e-6
+
+
+def test_frozen_odometry_yaw_switches_to_forward_steps_along_the_gyro_heading():
+    loc = GridLocalizer(CFG)
+    loc.start(0.0)
+    h = 0.0
+    loc.feed('leg', (0.0, 0.0, 0.0), h, 0.0)
+    for k in range(80):                            # turn on the spot 160 deg: the odometry yaw stays 0
+        h += math.radians(2.0)
+        loc.feed('leg', (0.0, 0.0, 0.0), h, 0.0)
+    assert loc.step_mode == 'forward' and loc.events
+    x0, y0, _ = loc.pose(h)
+    ox = 0.0
+    for k in range(50):                            # walk 1 m: the odometry x grows (its frozen frame)
+        ox += 0.02
+        loc.feed('leg', (ox, 0.0, 0.0), h, 0.2)
+    x, y, _ = loc.pose(h)
+    assert abs(math.hypot(x - x0, y - y0) - 1.0) < 0.02
+    assert abs(math.atan2(y - y0, x - x0) - h) < 0.02         # along the gyro heading

@@ -253,6 +253,8 @@ class CellPlanner:
                 continue
             a, b = A.edge_cells(k)
             for v, u in ((a, b), (b, a)):
+                if m.is_stairs(v) or m.is_stairs(u):
+                    continue
                 if m.visited(v) and not m.visited(u) and m.certain(u) and v in best:
                     cands.append((best[v][0], v, k, u))
         if not cands:

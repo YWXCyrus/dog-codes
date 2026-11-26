@@ -45,6 +45,7 @@ class NavIn:
     mission: dict = None                  # /quad/mission_status
     curtain_det: dict = None              # persistent camera curtain detection {'bearing', 'conf'}
     answers: list = field(default_factory=list)   # /quad/vlm_answer messages since the last step
+    stairs_cue: dict = None               # stairs straight ahead: camera model or lidar detector
 
 
 @dataclass
@@ -81,6 +82,8 @@ class CellNav:
         self.last_cell = None
         self.came_from = {}                 # cell -> direction the dog came from
         self.stairs_crossings = 0
+        self.stairs_asked = set()
+        self.realigned = {}
 
     # ------------------------------------------------------------------ helpers
     def _ev(self, t, **kw):
@@ -242,6 +245,10 @@ class CellNav:
             return self._look(ni)
         if self.phase == 'BACK':
             return self._back(ni)
+        if self.phase == 'STAIRS_ASK':
+            return self._stairs_ask(ni)
+        if self.phase == 'REALIGN':
+            return self._realign_step(ni)
         if self.phase in ('CURTAIN_ALIGN', 'CURTAIN_ASK', 'CURTAIN_PUSH', 'CURTAIN_BACK', 'PROBE_ALIGN',
                           'PROBE_ASK'):
             return self._curtain(ni, cur)
@@ -334,6 +341,8 @@ class CellNav:
     def _walk_out(self, ni, cmd, info, cur, nxt):
         """Blocked lane / no progress handling for a walking command."""
         c, m, t = self.c, self.m, ni.t
+        if 'blocked' in info and nxt is not None and not m.visited(nxt) and self._stairs_check(ni, cur, nxt):
+            return NavOut(Cmd(), '', ask=self.sub.get('ask_q'))
         if 'blocked' in info:
             fd = info['blocked']
             x, y, yaw = ni.apose
@@ -346,6 +355,8 @@ class CellNav:
             if beyond and fd > c['grid_obst_stop_m']:
                 # an obstacle INSIDE a cell (a prop, a cabinet), not on the border: creep up to it
                 cmd = Cmd(min(cmd.vx, c['grid_vx_near']), 0.0)
+            elif not beyond and self._realign(ni, cur, nxt):
+                return NavOut(Cmd(), '')          # first: square up exactly and look again
             elif not beyond:
                 # the border itself is blocked: impassable for now, and evidence that it is a wall
                 e = m.edge_between(cur, nxt)
@@ -379,6 +390,71 @@ class CellNav:
                 return NavOut(Cmd(), '', hold='no_progress')
             return NavOut(Cmd(), '')
         return NavOut(cmd, '')
+
+    def _realign(self, ni, cur, nxt):
+        """A border looked blocked while the dog walked a few degrees off the cell axis (its lane then clips
+        the next cell's side panel; sim 2026-11-26 after the stairs): square up to the axis exactly and stand
+        still grid_realign_s (the snap runs) before believing it. Once per border per 20 s."""
+        k = A.edge_key(cur, nxt)
+        last = self.realigned.get(k, -1e9)
+        if ni.t - last < 20.0:
+            return False
+        self.realigned[k] = ni.t
+        self._set('REALIGN', ni.t, yaw=A.DIR_YAW[A.dir_between(cur, nxt)], still=None)
+        self._ev(ni.t, grid='lane %s -> %s blocked: squaring up to look again' % (cur, nxt))
+        return True
+
+    def _realign_step(self, ni):
+        s, t = self.sub, ni.t
+        cmd = self._turn_to(ni.apose[2], s['yaw'], tol_deg=1.5)
+        if cmd is not None and t - s['t0'] < 8.0:
+            return NavOut(cmd, '')
+        if s['still'] is None:
+            s['still'] = t
+        if t - s['still'] < self.c['grid_realign_s']:
+            return NavOut(Cmd(), '')
+        self._set('GO', t)
+        return NavOut(Cmd(), '')
+
+    def _stairs_check(self, ni, cur, nxt):
+        """A lane into an unvisited cell is blocked. Stairs? The camera model / the lidar stairs detector
+        looking that way -> mark the cell; else, if the lidar sees through the border above the obstacle
+        (something low: a first step), ask perception's camera once. True = handled (stop this tick)."""
+        c, m, t = self.c, self.m, ni.t
+        if c['stairs'] != 'climb' or m.is_stairs(nxt):
+            return False
+        if ni.stairs_cue is not None:
+            if m.mark_stairs(nxt, ni.stairs_cue['src']):
+                self._ev(t, grid='stairs in %s (%s)' % (nxt, ni.stairs_cue['src']), stairs_cell=list(nxt))
+                self._set('PLAN', t)
+                self.plan_t = -1e9
+                return True
+            return False
+        e = m.edges.get(A.edge_key(cur, nxt))
+        k = A.edge_key(cur, nxt)
+        if (not c['stairs_ask_camera'] or e is None or k in self.stairs_asked
+                or not (e.state == A.OPEN or e.mp > e.mh)):
+            return False
+        self.stairs_asked.add(k)
+        self._set('STAIRS_ASK', t, nxt=nxt, cur=cur)
+        self.sub['ask_q'] = self._ask(ni, 'stairs')
+        return True
+
+    def _stairs_ask(self, ni):
+        c, s, t = self.c, self.sub, ni.t
+        if ni.stairs_cue is not None:
+            ans = {'answer': True}
+        else:
+            ans = self._answer(ni)
+            if ans is None and t - s.get('ask_t', s['t0']) < c['cur_vlm_wait_s']:
+                return NavOut(Cmd(), '')
+        yes = bool(ans and ans.get('answer')) and not (ans or {}).get('failed')
+        self._ev(t, stairs_answer='yes' if yes else 'no', cell=list(s['nxt']))
+        if yes:
+            self.m.mark_stairs(s['nxt'], 'camera')
+        self._set('PLAN', t)
+        self.plan_t = -1e9
+        return NavOut(Cmd(), '')
 
     def _start_back(self, ni, cur):
         """Off a cell centre in front of an obstacle: back straight to the centre of the cell the dog came
@@ -503,8 +579,11 @@ class CellNav:
     def on_stairs_done(self, t, cells):
         """The driver's stairs sequence finished (exit AI done). cells: cells passed while on the stairs."""
         for cl in cells:
+            if cl in self.paused and not self.m.is_stairs(cl):
+                continue                              # an ordinary cell walked before (pose error at the landing)
             self.m.mark_stairs(cl, 'crossed')
             self.m.force_visit(cl, t)
+            self.paused.add(cl)
         self.stairs_crossings += 1
         self._set('PLAN', t)
         self.plan_t = -1e9

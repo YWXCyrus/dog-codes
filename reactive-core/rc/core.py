@@ -137,12 +137,15 @@ class Core:
         self.odom.update(x, y, yaw, t, abs(self.last_cmd.vx))
         self.arrival['odom'] = t
         if self.started and self.src_name == 'leg':
-            self.loc.feed('leg', self.odom_raw, self.heading())
+            self.loc.feed('leg', self.odom_raw, self.heading(), self.last_cmd.vx)
+            if self.loc.events:
+                self.pending_events.extend({'t': round(t, 2), 'loc': e} for e in self.loc.events)
+                self.loc.events = []
 
     def on_lio(self, pos, quat, t):
         bad = self.lio.on_pose(pos, quat, t)
         if bad is None and self.started and self.src_name == 'lio':
-            self.loc.feed('lio', self.lio_base_pose(), self.heading())
+            self.loc.feed('lio', self.lio_base_pose(), self.heading(), self.last_cmd.vx)
         if bad is not None:
             self.map_extra = np.zeros((0, 2))
             self.pending_events.append({'t': round(t, 2), 'lio_bad': bad + ' - map off, live scan only'})
@@ -260,6 +263,16 @@ class Core:
         self.answers.append(ans)
         self.pending_events.append({'t': round(t, 2), 'vlm_answer': ans})
 
+    def _stairs_cue(self, t):
+        """Stairs straight ahead (body bearing, rad) from the camera model or the lidar stairs detector, or None."""
+        sd = self.cam['stairs'].seen(t)
+        if sd is not None and abs(sd['bearing']) < math.radians(25.0):
+            return {'bearing': sd['bearing'], 'src': 'camera'}
+        st = self.stairs
+        if st.kind in ('up', 'unsure') and st.edge_x < 1.6 and abs(st.heading) < math.radians(25.0):
+            return {'bearing': st.heading, 'src': 'lidar_' + st.kind}
+        return None
+
     def _grid_cues(self, t, ap):
         """Camera / lidar cues into the map (2 Hz)."""
         if ap is None or t - self.cue_t < 0.5:
@@ -281,18 +294,11 @@ class Core:
             if cl != here and not m.visited(cl) and m.mark_stairs(cl, 'lidar'):
                 self.pending_events.append({'t': round(t, 2), 'stairs_cell': list(cl), 'src': 'lidar'})
         sd = self.cam['stairs'].seen(t)
-        if sd is not None:
-            h = yaw + sd['bearing']
-            for d in (0.8, 1.2, 1.6, 2.0):
-                cl = m.cell_of(x + d * math.cos(h), y + d * math.sin(h))
-                if cl == here or m.visited(cl):
-                    continue
-                self.stairs_hints[cl] = self.stairs_hints.get(cl, 0) + 1
-                if m.terrain(cl) == 'elevated' and self.stairs_hints[cl] >= 2 and m.mark_stairs(cl, 'camera'):
-                    self.pending_events.append({'t': round(t, 2), 'stairs_cell': list(cl), 'src': 'camera+lidar'})
-                break
+        if sd is not None:                     # camera-model stairs: a hint for the viewer; the navigator uses
+            h = yaw + sd['bearing']            # it (NavIn.stairs_cue) when a lane into a cell is blocked
+            cl = m.cell_of(x + 1.2 * math.cos(h), y + 1.2 * math.sin(h))
+            self.stairs_hints[cl] = self.stairs_hints.get(cl, 0) + 1
 
-    # ---------------------------------------------------------------- helpers
     def ages(self, t):
         return {k: (math.inf if v is None else t - v) for k, v in self.arrival.items()}
 
@@ -389,7 +395,8 @@ class Core:
                              front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
                              apose=ap, nav_pts=np.vstack([self.scan.obs, self.scan.drops, mem.reshape(-1, 2)]),
                              elapsed=t - (self.t_go if self.t_go is not None else t), mission=self.mission,
-                             curtain_det=self.cam['curtain'].seen(t), answers=self.answers)
+                             curtain_det=self.cam['curtain'].seen(t), answers=self.answers,
+                             stairs_cue=self._stairs_cue(t))
             self.answers = []
             out = self.driver.step(di)
             if out.ask is not None:

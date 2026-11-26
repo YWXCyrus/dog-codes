@@ -6,8 +6,56 @@ a read-only live map viewer, and recording of every run. Design: `docs/specs/202
 Plain Python + numpy; nothing to build.
 
 **Safety.** Someone holds the controller e-stop for every run on the dog. The controller always
-wins over this code (twist_mux priority 100 vs 10). The code never reverses. An e-stop is never
-recovered by the code: after STOP the script stops commanding and exits.
+wins over this code (twist_mux priority 100 vs 10). The code never reverses (two exceptions in grid
+mode, both slow and straight back over the ground just walked: after a curtain touch test found a wall,
+and backing out of a cell blocked by a prop). An e-stop is never recovered by the code: after STOP the
+script stops commanding and exits.
+
+## 0. Grid navigation (branch `grid-nav`, 2026-11-26) — the default now (`nav_mode: grid`)
+
+The dog keeps its own map of the booklet arena (3 x 5 cells of 1.02 m + the final cell) and drives
+**cell centre to cell centre**. `--set nav_mode=wall` brings back the old wall following unchanged.
+
+| piece | file | what it does |
+|---|---|---|
+| arena map | `rc/arena.py` | every cell border is `wall` / `open` / `curtain` / `unknown` from lidar height bands (panel = returns ON the border at 0.22-0.42 m; hanging curtain = open below the hem, cloth at 0.62-0.95 m; camera cues). Cells: unknown / seen / visited, terrain, perception labels. The 12 possible placements of the 3 x 5 rectangle (start in the first row, any start heading) are narrowed by the visited cells -> bounds + the final cell. |
+| localisation | `rc/localize.py` | arena pose = odometry body steps rotated by the gyro heading, **snapped to the panels** at 3 Hz (heading from the sharpest wall histograms, position from panel faces on the 1.02 m border lines). Sim: < 5 cm with 6 % odometry scale error, 3 % gyro error and a drifting odometry heading. |
+| planner | `rc/cellplan.py` | Dijkstra over (cell, heading): walls impossible, unknown borders a little dearer, turns cost, stairs left for last and crossed straight. Goal = the unvisited cell that starts the shortest tour of the rest (nearest neighbour + 2-opt) - no dead end left behind to come back for. Then a detected curtain (crossed once: 15 points), then the final cell. |
+| navigator | `rc/cellnav.py` | turns only near a cell centre (the turning circle fits in a cell), walks straight along the cell axis, aims at the centre line (stays in the middle of doorways), stops still for `cell_pause_s` at every new cell (perception gets a sharp picture). Blocked lane -> square up and look again -> border marked blocked + replan. Curtain border -> square up, camera question, push at 0.12 m/s with the front stop relaxed for the cloth only, touch test. Stairs cell next -> the stairs sequence below (AI Basic only from the cell before to the cell after). Final cell centre -> `FINISHED`. |
+
+Status line in grid mode: `GRID GO exp->(2, 1)  cell (1,0)  pos ( 1.02, 0.00)  0deg  visited  4/15 ...`
+(`exp` explore / `fin` going to the final cell). Events in `decisions.jsonl`: `plan`, `grid`, `grid_block`,
+`curtain`, `stairs_cell`, `arena_cell` (with the reportable `pos`), `finish`.
+
+**With perception** (`perception/perception.launch.py`): start it with `odom_topic:=/rc/odom` - that is the
+snapped arena pose, so the reported `pos` falls in the right cell. The navigator reads
+`/quad/mission_status` (survivor rooms -> it looks at the side walls for the QR, labels on the map) and asks
+`/quad/vlm_ask` `{"kind": "curtain"|"stairs"}` when it needs the camera. The camera model sidecar
+(`python3 -m rc.vision_node --model ~/best.pt`) gives `/rc/detections` (curtain / human / stairs).
+
+**Viewer**: `http://<dog>:8081` - the arena view: cells coloured unknown / seen / visited, solid walls,
+dashed curtains, labels (room type, survivor, QR, M0x), the dog with heading, trail, planned path, lidar
+points, status / plan / mission panel. Replay a run's `snapshots.jsonl` with play / pause.
+
+**Simulator**: `python3 tools/sim_batch.py` (all scenarios, ~2.5 min on 16 cores; `--drift`; `-v` for the
+event log) - random mazes in all start orientations, rubble strips, props, a curtain on a dead-end
+room and on an alternative route, stairs on the way to the exit. `tests/test_grid_sim.py` runs them in pytest.
+
+Grid-mode keys to know (all in `config.yaml`, `--set key=value`):
+
+| key | default | what |
+|---|---|---|
+| `nav_mode` | grid | `wall` = the old wall following |
+| `cruise_vx` | 0.20 | speed between centres (hand driving was 0.3-0.4 m/s) |
+| `cell_pause_s` | 1.0 | still at each new cell (perception) |
+| `explore_budget_s` | 450 | after this (minus the drive there) go to the final cell |
+| `walk_wz_max` | 0.0 | > 0 lets the dog steer while walking (smoother; the guard caps it) |
+| `curtain` | push | `detect` = mark only, `off` |
+| `cur_ask_camera` / `cur_probe` / `cur_probe_touch` | true / true / false | camera before a lidar-only curtain push / ask about walls in front of unreached arena cells / push them without a camera answer |
+| `stairs_grid_fallback` | true | squared up before a stairs cell and the lidar detector is not sure after `stair_wait_s`: approach on the grid anyway (else HOLD `stairs_unsure`) |
+| `edge_mid_lo..hi`, `edge_up_lo..hi` | 0.22-0.42, 0.62-0.95 | border bands (measure the real panel height and curtain hem) |
+| `snap` | true | grid snap on/off; `snap_z_lo..hi` 0.22-0.60 = panel heights used |
+| `pose_src` | leg | `lio` = FAST-LIO body steps (falls back to leg) |
 
 ## 1. Run it on the dog
 
