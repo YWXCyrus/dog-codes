@@ -250,6 +250,8 @@ cam_det_cone_deg: 20.0
 stair_wait_s: 4.0                    # squared up before the stairs: wait this long for the lidar detector ...
 stairs_grid_fallback: true           # ... then approach on the grid (border = first riser) instead of HOLD
 stairs_ask_camera: true              # a blocked OPEN border: ask the camera whether it is stairs
+stairs_vlm_wait_s: 12.0              # ... wait this long for the answer (live 093607: 4.5 s and 8.8 s; 8 s timed out)
+stairs_ask_max: 3                    # ... no answer in time = ask again later, up to this many questions per border
 publish_arena_odom: true             # /rc/odom (nav_msgs/Odometry, arena frame) for perception's positions
 
 # ---- start-up / posture (spec section 4) ----

@@ -70,8 +70,7 @@ def test_room_closed_by_fences_is_never_entered_not_even_to_reach_cells_behind_i
     dog = Dog(1.02, 0.0, 0.0)
     outs = drive(nav, dog, 40.0, answer_after=0.0)
     assert events(outs, 'scene_done') and m.visited((2, 0))
-    assert m.is_blocked((1, 0), (2, 0), dog.t)
-    assert all(m.is_blocked((2, 0), n, dog.t) for n in ((3, 0), (2, 1), (2, -1)))
+    assert all(m.is_blocked((2, 0), n, dog.t) for n in ((3, 0), (2, 1), (2, -1)))   # fence sides: never through
     assert max(o.cmd.vx for o in outs) <= 0.0 and dog.x < 1.2
 
 
@@ -201,3 +200,64 @@ def test_stairs_seen_event_once_per_change():
     core._stairs_seen_event(5.0)                                   # now sure
     ev = [e for e in core.pending_events if 'stairs_seen' in e]
     assert [e['confident'] for e in ev] == [False, True]
+
+
+# ---------------------------------------------------------------- the stairs question (no camera model)
+def ask_setup():
+    m = boxed_map(opens=[((0, 0), (1, 0))], visited=[(0, 0)])
+    nav = make_nav(m, (0, 0), came=None)
+    ni = Dog(0.0, 0.0, 0.0).ni()
+    ni.stairs_cue = {'bearing': 0.0, 'src': 'lidar_unsure'}
+    assert nav._stairs_check(ni, (0, 0), (1, 0)) is True and nav.phase == 'STAIRS_ASK'
+    return m, nav, ni
+
+
+def test_an_unsure_lidar_is_never_taken_as_the_answer():
+    # the bug of bdbca60: the waiting code took ANY lidar cue, also 'unsure', as yes on the next tick
+    m, nav, ni = ask_setup()
+    ni.t = 0.5
+    nav._stairs_ask(ni)
+    assert nav.phase == 'STAIRS_ASK' and not m.is_stairs((1, 0))       # still waiting for the camera
+
+
+def test_no_answer_in_time_asks_again_up_to_the_limit():
+    m, nav, ni = ask_setup()
+    k = A.edge_key((0, 0), (1, 0))
+    for n in range(1, CFG['stairs_ask_max'] + 1):
+        ni.t += CFG['stairs_vlm_wait_s'] + 0.1
+        nav._stairs_ask(ni)                                             # timed out
+        assert not m.is_stairs((1, 0)) and nav.stairs_tries[k] == n
+        assert (k in nav.stairs_asked) == (n >= CFG['stairs_ask_max'])
+        if n < CFG['stairs_ask_max']:
+            assert nav._stairs_check(ni, (0, 0), (1, 0)) is True        # asked again
+    assert nav._stairs_check(ni, (0, 0), (1, 0)) is False               # enough: plain blocked border now
+
+
+def test_a_real_answer_decides_and_a_no_is_not_asked_again():
+    m, nav, ni = ask_setup()
+    qid = nav.sub['ask_id']
+    ni.t, ni.answers = 5.0, [{'id': qid, 'kind': 'stairs', 'answer': False}]
+    nav._stairs_ask(ni)
+    assert not m.is_stairs((1, 0)) and A.edge_key((0, 0), (1, 0)) in nav.stairs_asked
+    m2, nav2, ni2 = ask_setup()
+    ni2.t, ni2.answers = 5.0, [{'id': nav2.sub['ask_id'], 'kind': 'stairs', 'answer': True}]
+    nav2._stairs_ask(ni2)
+    assert m2.is_stairs((1, 0))
+
+
+def test_a_dead_ends_wall_that_is_a_curtain_stays_reachable():
+    # sim curtain_leaf: the 'dead end' (1,-1)'s far side is the curtain to the room (0,-1). Blocking it after the
+    # doorway look lost that room; WALL sides and the doorway are not blocked, so the curtain route stays open
+    m = boxed_map(opens=[((2, -1), (1, -1))], visited=[(2, -1)])
+    nav = make_nav(m, (2, -1), came='N')
+    dog = Dog(2.04, -1.02, math.pi)                               # facing (1,-1), -x
+    outs = drive(nav, dog, 12.0, perception=False)
+    assert events(outs, 'scene_done') and m.visited((1, -1))
+    assert not m.is_blocked((2, -1), (1, -1), dog.t) and not m.is_blocked((1, -1), (0, -1), dog.t)
+    e = m.edge(A.edge_key((1, -1), (0, -1)))
+    e.cue = 5.0                                                   # later: the camera says curtain
+    m._classify(e)
+    assert e.state == A.CURTAIN
+    from rc.cellplan import CellPlanner
+    p = CellPlanner(CFG, m).plan_to((2, -1), 'S', dog.t, (0, -1))
+    assert p is not None and p.path[-2:] == [(1, -1), (0, -1)]

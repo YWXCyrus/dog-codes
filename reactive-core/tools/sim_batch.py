@@ -17,7 +17,10 @@ sys.path.insert(0, HERE)
 
 
 def run_one(args):
-    name, sets, drift, T, verbose = args
+    """args: (name, sets, drift, T, verbose[, opts]) - opts: camera (fake best.pt detections, default True),
+    perception (a perception status arrives, so the navigator asks the VLM), vlm_delay_s (answer delay)."""
+    name, sets, drift, T, verbose = args[:5]
+    opts = args[5] if len(args) > 5 else {}
     from rc import arena as A
     from rc import config
     from sim import scenarios as SC
@@ -25,8 +28,10 @@ def run_one(args):
     cfg = config.load(overrides=sets)
     w, info = SC.SCENARIOS[name]()
     t0 = time.time()
-    res = simulate(w, cfg, T=T, lidar_kwargs=SC.FAST_LIDAR, camera=True,
-                   dog_kwargs=SC.DRIFT if drift else None, resume_on_hold=True)
+    mission = {'tasks': {}, 'qr': {}, 'survivor_cells': []} if opts.get('perception') else None
+    res = simulate(w, cfg, T=T, lidar_kwargs=SC.FAST_LIDAR, camera=opts.get('camera', True),
+                   dog_kwargs=SC.DRIFT if drift else None, resume_on_hold=True, mission=mission,
+                   vlm_delay_s=opts.get('vlm_delay_s', 3.0))
     core = res.core
     cells = set(w.layout['cells'])
     vis = set(core.amap.order)
@@ -60,7 +65,8 @@ def run_one(args):
            'wall_s': round(time.time() - t0)}
     if verbose:
         out['log'] = [e for e in res.events if set(e) & {'plan', 'grid', 'grid_block', 'grid_fail', 'curtain', 'hold',
-                                                         'stairs', 'arena', 'stairs_grid', 'stairs_cell', 'curtain_answer'}]
+                                                         'stairs', 'arena', 'stairs_grid', 'stairs_cell', 'curtain_answer',
+                                                         'ask', 'stairs_answer', 'scene_done'}]
     return out
 
 
@@ -71,10 +77,14 @@ def main():
     ap.add_argument('--set', action='append', default=[])
     ap.add_argument('-T', type=float, default=480.0)
     ap.add_argument('-v', action='store_true')
+    ap.add_argument('--no-camera', action='store_true', help='no camera model (best.pt) detections')
+    ap.add_argument('--perception', action='store_true', help='perception runs: the navigator asks the VLM')
+    ap.add_argument('--vlm-delay', type=float, default=3.0, help='VLM answer delay, s')
     a = ap.parse_args()
     from sim import scenarios as SC
     names = a.names or list(SC.SCENARIOS)
-    jobs = [(n, a.set, a.drift, a.T, a.v) for n in names]
+    opts = {'camera': not a.no_camera, 'perception': a.perception, 'vlm_delay_s': a.vlm_delay}
+    jobs = [(n, a.set, a.drift, a.T, a.v, opts) for n in names]
     with mp.Pool(min(len(jobs), max(1, mp.cpu_count() - 2))) as pool:
         rows = pool.map(run_one, jobs)
     bad = 0

@@ -99,6 +99,7 @@ class CellNav:
         self.came_from = {}                 # cell -> direction the dog came from
         self.stairs_crossings = 0
         self.stairs_asked = set()
+        self.stairs_tries = {}              # border -> stairs questions without an answer
         self.realigned = {}
         self.back_ok = True
         self.scene_done = set()             # cells looked at from their doorway (never entered)
@@ -537,16 +538,26 @@ class CellNav:
 
     def _stairs_ask(self, ni):
         c, s, t = self.c, self.sub, ni.t
-        if ni.stairs_cue is not None:
-            ans = {'answer': True}
+        cue = ni.stairs_cue
+        if cue is not None and cue.get('src') != 'lidar_unsure':
+            ans = {'answer': True}                    # the lidar became sure / the camera model saw stairs
         else:
             ans = self._answer(ni)
-            if ans is None and t - s.get('ask_t', s['t0']) < c['cur_vlm_wait_s']:
+            if ans is None and t - s.get('ask_t', s['t0']) < c['stairs_vlm_wait_s']:
                 return NavOut(Cmd(), '')
-        yes = bool(ans and ans.get('answer')) and not (ans or {}).get('failed')
-        self._ev(t, stairs_answer='yes' if yes else 'no', cell=list(s['nxt']))
-        if yes:
-            self.m.mark_stairs(s['nxt'], 'camera')
+        k = A.edge_key(s['cur'], s['nxt'])
+        if ans is None or ans.get('failed'):
+            # no answer in time (live 093607: 8.8 s) / perception failed: not a 'no' - ask again next time the
+            # lane into that cell is blocked, up to stairs_ask_max questions per border
+            self.stairs_tries[k] = self.stairs_tries.get(k, 0) + 1
+            if self.stairs_tries[k] < c['stairs_ask_max']:
+                self.stairs_asked.discard(k)
+            self._ev(t, stairs_answer='none', cell=list(s['nxt']), tries=self.stairs_tries[k])
+        else:
+            yes = bool(ans.get('answer'))
+            self._ev(t, stairs_answer='yes' if yes else 'no', cell=list(s['nxt']))
+            if yes:
+                self.m.mark_stairs(s['nxt'], 'camera')
         self._set('PLAN', t)
         self.plan_t = -1e9
         return NavOut(Cmd(), '')
@@ -722,14 +733,17 @@ class CellNav:
         m.force_visit(cell, t)                    # counts for the tour and the 3 x 5 bounds ...
         self.paused.add(cell)
         m.set_label(cell, 'look', s['kind'])
-        # the planner never walks in, not even through a fence side the ray test still calls UNKNOWN (it would plan
-        # through the room to the cells behind it): the doorway - unless the dog stands in the room - and every
-        # closed side are impassable for good
-        if m.cell_of(ni.apose[0], ni.apose[1]) != tuple(cell):
-            m.block(cur, cell, t, 1e9)
+        # visited now, so it is never a goal again. The planner must not route THROUGH it either: a fence side the
+        # ray test still calls UNKNOWN (closed only by coverage) is impassable for good. A WALL side is impassable
+        # anyway, and is NOT blocked: it may still turn out to be a curtain (sim curtain_leaf: the 'dead end' (1,-1)
+        # is the way to the room behind a curtain - blocking it lost that room). The doorway stays open for that.
         for d in A.DIRS:
             n = A.step(cell, d)
-            if n != tuple(cur) and m.side_closed(cell, n):
+            if n == tuple(cur) or not m.side_closed(cell, n):
+                continue
+            e = m.edges.get(A.edge_key(cell, n))
+            curtainish = e is not None and (e.state in (A.WALL, A.CURTAIN) or e.was_curtain or e.cue > 0)
+            if not curtainish:
                 m.block(cell, n, t, 1e9)
         self._ev(t, grid='%s %s looked at from %s - not entered' % (s['kind'], cell, cur), scene_done=list(cell),
                  answered=s['answered'])

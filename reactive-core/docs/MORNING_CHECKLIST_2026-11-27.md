@@ -16,6 +16,10 @@ Use `git checkout integrated` instead of `grid-nav` in A1. grid-nav itself ran l
 - [ ] **Wooden boards**: the dog drives over them; no `>> stairs confirm` for them. If the camera is asked, expect
       `>> not stairs (i,j) (camera)`.
 - [ ] Perception: plain `ros2 launch ~/dog-codes/perception/perception.launch.py arena:=A` (odom now defaults to /rc/odom).
+- [ ] **Camera model (`best.pt`, `rc.vision_node`): NOT started** (2026-11-26: CPU). Nothing else changes: stairs come
+      from the lidar (when sure) or the VLM ("stairs?", answer waited 12 s, asked again up to 3x when it times out),
+      curtains from the lidar + the VLM + the touch test. Sim without it (stairs, curtain_leaf, curtain_alt; VLM 3 s
+      and 9 s): all pass. Expect `>> asking the camera: stairs?` then `>> stairs confirm (i,j) (camera)` at the stairs.
 
 Everything below was built and tested overnight **in the simulator only** (no ROS on the build PC, no dog).
 Nothing in it has run on the real dog yet. Prep time 09:00-11:45, prelims 12:15, software freeze before.
@@ -27,8 +31,9 @@ The old behaviour is one switch away: `--set nav_mode=wall`.
 3. Which arena (left = A, right = B)? It goes into the perception launch (`arena:=A|B`, report URL `/task_report_A|B`).
 4. `frontier-fastlio/dog_codes/config/mission.yaml`: fill in M02's hazard label if the task text names it
    (M01 is always `hand_tools`). Leave blanks if unknown.
-5. Camera model: where is `best.pt` on the dog, and does `python3 -m rc.vision_node --model <path>` start
-   (needs ultralytics)? If not, the curtain/stairs camera cues come only from the scene server (slower, ~4 s).
+5. (branch `integrated`: skip - the camera model is not started, see section 0.) Camera model: where is `best.pt`
+   on the dog, and does `python3 -m rc.vision_node --model <path>` start (needs ultralytics)? If not, the
+   curtain/stairs camera cues come only from the scene server (slower, ~4 s).
 
 ## B. Dry run with the dog walked by hand (15 min; the most important check)
 Terminal 1 bring-up as usual. Terminal 2: `python3 run.py` (dry run, sends nothing). After "Ready", press

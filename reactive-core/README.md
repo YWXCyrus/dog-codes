@@ -31,7 +31,9 @@ Status line in grid mode: `GRID GO exp->(2, 1)  cell (1,0)  pos ( 1.02, 0.00)  0
 snapped arena pose, so the reported `pos` falls in the right cell. The navigator reads
 `/quad/mission_status` (survivor rooms -> it looks at the side walls for the QR, labels on the map) and asks
 `/quad/vlm_ask` `{"kind": "curtain"|"stairs"}` when it needs the camera. The camera model sidecar
-(`python3 -m rc.vision_node --model ~/best.pt`) gives `/rc/detections` (curtain / human / stairs).
+(`python3 -m rc.vision_node --model ~/best.pt`) gives `/rc/detections` (curtain / human / stairs) - **branch
+`integrated`: not started (CPU)**; every path that uses it stays idle, the VLM answers instead (sim checked:
+`tools/sim_batch.py stairs curtain_leaf curtain_alt --no-camera --perception [--vlm-delay 9]`).
 
 **Viewer**: `http://<dog>:8081` - the arena view: cells coloured unknown / seen / visited, solid walls,
 dashed curtains, labels (room type, survivor, QR, M0x), the dog with heading, trail, planned path, lidar

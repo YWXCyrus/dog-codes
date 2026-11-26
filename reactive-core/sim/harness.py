@@ -87,7 +87,8 @@ def vlm_answer(world, dog, q, mode):
 
 def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0, dt=0.05,
              resume_on_hold=False, verbose=False, camera=False, vlm='truth', lidar_kwargs=None,
-             lidar_every=2, stop_on_finish=True, mission=None):
+             lidar_every=2, stop_on_finish=True, mission=None, vlm_delay_s=3.0):
+    """vlm_delay_s: perception's answer comes this long after the question (live 2026-11-26: 4.5 and 8.8 s)."""
     dog = DogModel(world, *start, seed=seed, **(dog_kwargs or {}))
     lidar = Lidar(mount_xyz=cfg['mount_xyz'], mount_pitch_deg=cfg['mount_pitch_deg'], seed=seed,
                   **(lidar_kwargs or {}))
@@ -114,7 +115,7 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
         if mission is not None and k % 20 == 0:
             core.on_mission_status(mission(core, dog, t) if callable(mission) else mission, t)
         for q in core.pending_asks:
-            pending.append((t + 3.0, q))
+            pending.append((t + vlm_delay_s, q))
         core.pending_asks = []
         for item in [p for p in pending if p[0] <= t]:
             pending.remove(item)

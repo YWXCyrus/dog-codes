@@ -86,16 +86,34 @@ def _negated(txt, i):
     return any(n in clause for n in NEGATIONS)
 
 
-def stairs_in_result(res):
-    """res: scene_client.parse_result dict -> True if the answer names stairs (not when it denies them)."""
-    txt = (str(res.get('desc', '')) + ' . ' + ' . '.join(map(str, res.get('evidence', [])))).lower()
-    for w in STAIRS_WORDS:
+CURTAIN_WORDS = ('curtain', 'cloth', 'fabric', 'drape')
+
+
+def mentions(txt, words):
+    """True if one of `words` appears in txt outside a denial ('no curtain', 'not a staircase')."""
+    txt = txt.lower()
+    for w in words:
         i = txt.find(w)
         while i >= 0:
             if not _negated(txt, i):
                 return True
             i = txt.find(w, i + 1)
     return False
+
+
+def result_text(res):
+    return str(res.get('desc', '')) + ' . ' + ' . '.join(map(str, res.get('evidence', [])))
+
+
+def stairs_in_result(res):
+    """res: scene_client.parse_result dict -> True if the answer names stairs (not when it denies them)."""
+    return mentions(result_text(res), STAIRS_WORDS)
+
+
+def curtain_answer(res):
+    """The navigator's 'curtain?' question: the VLM's own yes, or a curtain named and not denied (the plain
+    word check counted "no curtain visible" as yes - the same flaw that called wooden boards stairs)."""
+    return bool(res.get('relevant')) or mentions(result_text(res), CURTAIN_WORDS)
 
 
 def mission_status(mission, best, qr_text=None, qr_seen_recent=False, m05_hint='', survivor_cells=(),

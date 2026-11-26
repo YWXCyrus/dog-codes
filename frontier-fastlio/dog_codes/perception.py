@@ -549,7 +549,7 @@ class Perception(Node):
                 continue
             if job['kind'] == 'curtain':
                 txt = (res['desc'] + ' ' + ' '.join(map(str, res['evidence']))).lower()
-                yes = res['relevant'] or any(w in txt for w in ('curtain', 'cloth', 'fabric', 'drape'))
+                yes = PC.curtain_answer(res)
                 self.ans_pub.publish(C.jmsg({'id': job['id'], 'answer': bool(yes), 'text': txt[:120]}))
                 continue
             self.handle_scene(job, res)

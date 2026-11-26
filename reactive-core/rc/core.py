@@ -225,8 +225,12 @@ class Core:
         on_stairs = self.driver.mode == STAIRS or self.driver.stairs_mode
         pushing = self.driver.front_ignore is not None
         level = self.att.tilt_deg() < c['snap_max_tilt_deg']
-        self.last_snap = self.loc.update(p, self.floor_z, hd, t, gyro_z=self.gyro[2],
-                                         tilt_deg=self.att.tilt_deg(), allowed=not on_stairs and not pushing) or self.last_snap
+        # standing in front of the stairs (waiting for the lidar / the camera's answer): the risers look like
+        # panels to the snap and drag the pose forward (sim stairs, VLM 9 s: 0.47 m, the dog 'in' the stairs cell)
+        nav = self.driver.nav
+        at_stairs = nav is not None and nav.phase in ('STAIRS_ASK', 'STAIRS_WAIT')
+        self.last_snap = self.loc.update(p, self.floor_z, hd, t, gyro_z=self.gyro[2], tilt_deg=self.att.tilt_deg(),
+                                         allowed=not on_stairs and not pushing and not at_stairs) or self.last_snap
         if on_stairs or not level or t - self.obs_t < 1.0 / c['observe_hz'] - 1e-6:
             return
         self.obs_t = t

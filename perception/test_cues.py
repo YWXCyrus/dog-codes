@@ -124,3 +124,10 @@ def test_stairs_words_in_a_denial_are_not_stairs():
     assert not any(PC.stairs_in_result({'desc': d, 'evidence': []}) for d in no)
     assert all(PC.stairs_in_result({'desc': d, 'evidence': []}) for d in yes)
     assert PC.stairs_in_result({'desc': 'a room', 'evidence': ['steps going up on the left']})
+
+
+def test_curtain_answer_ignores_denials():
+    assert not PC.curtain_answer({'relevant': False, 'desc': 'a plain wall panel ahead, no curtain visible', 'evidence': []})
+    assert not PC.curtain_answer({'relevant': False, 'desc': 'a wall without any cloth or drape', 'evidence': []})
+    assert PC.curtain_answer({'relevant': False, 'desc': 'a grey fabric curtain hangs ahead', 'evidence': []})
+    assert PC.curtain_answer({'relevant': True, 'desc': 'something hanging', 'evidence': []})
