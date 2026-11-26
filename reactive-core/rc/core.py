@@ -5,6 +5,7 @@ or the simulator clock), call start(t) when the operator presses Enter, then tic
 cmd_rate_hz. tick() returns the GUARDED command plus any /simple_cmd codes to send.
 """
 import math
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -96,6 +97,7 @@ class Core:
         self.cue_t = -1e9
         self.stairs_hints = {}
         self.last_snap = None
+        self.cpu = {}                              # processing times (ms): cloud callback, decision tick
 
     # ---------------------------------------------------------------- inputs
     def set_mount(self, xyz, pitch):
@@ -163,16 +165,22 @@ class Core:
         self.scan = self.det.update(p, self.floor_z, t, stairs_mode=stairs_mode)
         # FAST-LIO map: earlier scans in the current sensor frame, levelled like this one; the same
         # obstacle rule on live + map points gives the cells for the lanes (front stop: live only)
-        m = self.lio.points_sensor(t)
+        t_cpu = time.perf_counter()
+        use_map = self.c['nav_mode'] != 'grid' or self.c['grid_use_lio_map']
+        m = self.lio.points_sensor(t) if use_map else np.zeros((0, 3))
         if m.shape[0]:
             pm = level_points(m, self.mount, self.att.roll, self.att.pitch)
             sm = self.det_map.update(np.vstack([p, pm]), self.floor_z, t, stairs_mode=stairs_mode)
             self.map_extra = np.vstack([sm.obs, sm.drops])
         else:
             self.map_extra = np.zeros((0, 2))
-        self.lio.add(xs, t)
+        if use_map:
+            self.lio.add(xs, t)
         self.stairs = self.stairs_det.update(p, self.floor_z, t, self.dist_from_start())
         self._grid_cloud(p, t)
+        dt_ms = (time.perf_counter() - t_cpu) * 1000.0
+        self.cpu['cloud'] = 0.8 * self.cpu.get('cloud', dt_ms) + 0.2 * dt_ms
+        self.cpu['cloud_max'] = max(self.cpu.get('cloud_max', 0.0) * 0.98, dt_ms)
 
     # ---------------------------------------------------------------- grid navigation
     def lio_base_pose(self):
@@ -396,9 +404,13 @@ class Core:
                              apose=ap, nav_pts=np.vstack([self.scan.obs, self.scan.drops, mem.reshape(-1, 2)]),
                              elapsed=t - (self.t_go if self.t_go is not None else t), mission=self.mission,
                              curtain_det=self.cam['curtain'].seen(t), answers=self.answers,
-                             stairs_cue=self._stairs_cue(t))
+                             stairs_cue=self._stairs_cue(t),
+                             perception=self.mission_t is not None and t - self.mission_t < 5.0)
             self.answers = []
+            t_cpu = time.perf_counter()
             out = self.driver.step(di)
+            dt_ms = (time.perf_counter() - t_cpu) * 1000.0
+            self.cpu['tick_max'] = max(self.cpu.get('tick_max', 0.0) * 0.98, dt_ms)
             if out.ask is not None:
                 self.pending_asks.append(out.ask)
             self.drive_out = out
@@ -434,6 +446,11 @@ class Core:
             'nav': self.c['nav_mode'], 'acell': self._acell(t), 'apos': self._apos(t),
             'src': self.src_name, 'elapsed': None if self.t_go is None else round(t - self.t_go, 1),
             'visited': len(self.amap.order), 'bounds': self.amap.bounds_known(),
+            'cpu': {k: round(v) for k, v in self.cpu.items()},
+            # free distance straight ahead (lane_w wide) per source: live obstacles / drops / FAST-LIO map
+            'ahead': [round(L.free_distance(self.scan.obs, 0.0, self.c['lane_w']), 2),
+                      round(L.free_distance(self.scan.drops, 0.0, self.c['lane_w']), 2),
+                      round(L.free_distance(self._mem_body(t), 0.0, self.c['lane_w']), 2)],
         }
 
     def _acell(self, t):

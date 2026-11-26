@@ -6,7 +6,7 @@ import pytest
 from rc import config
 from rc.liomap import LioMap
 
-CFG = config.load()
+CFG = config.load(overrides=['nav_mode=wall'])          # the FAST-LIO map feeds the lanes in wall mode (grid: grid_use_lio_map)
 Q0 = (0.0, 0.0, 0.0, 1.0)
 
 

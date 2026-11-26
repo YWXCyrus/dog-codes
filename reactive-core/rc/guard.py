@@ -77,7 +77,7 @@ class Guard:
         reasons = []
         if vx < 0.0:
             if gi.reverse_ok and wz == 0.0:
-                vx = max(vx, -0.10)                # curtain retreat over the ground just walked in on
+                vx = max(vx, -0.15)                # curtain retreat / backing out over the ground just walked in on
                 reasons.append('reverse_retreat')
             else:
                 vx = 0.0

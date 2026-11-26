@@ -153,7 +153,10 @@ def fmt_status(t0, st):
                 'odom %s  src %s  stairs %-6s%s' % (
                     time.monotonic() - t0, mode, '(%d,%d)' % tuple(st['acell']), a[0], a[1], a[2], st['visited'],
                     ' bounds' if st['bounds'] else '', st['front_m'], st['tilt'], 'ok' if st['odom_ok'] else 'BAD',
-                    st['src'], st['stairs'], ('  guard ' + ','.join(st['guard'])) if st['guard'] else ''))
+                    st['src'], st['stairs'], ('  guard ' + ','.join(st['guard'])) if st['guard'] else '')
+                + ('  lane obs/drop/map %s' % ('/'.join('%.2f' % v for v in st['ahead'])) if st.get('ahead') else '')
+                + ('  cpu cloud %s/%s tick %s ms' % (st['cpu'].get('cloud'), st['cpu'].get('cloud_max'),
+                                                    st['cpu'].get('tick_max')) if st.get('cpu') else ''))
     cell = 'cell (%d,%d) %s' % (st['cell'][0], st['cell'][1], st['dir'] or '-') if st['cell'] else 'cell -'
     mode = st['mode'] + (' ' + st['phase'] if st['phase'] else '')
     return '[%6.1fs] %-16s %-14s front %4.2f m  tilt %4.1f  floor %.2f  odom %s  lio %-3s  stairs %-6s  wall %s%s' % (

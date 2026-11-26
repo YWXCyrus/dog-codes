@@ -111,14 +111,14 @@ pose_src: leg                        # leg (leg odometry + gyro yaw) | lio (FAST
 loc_jump_m: 0.30                     # an odometry step longer than this is a jump, not a motion
 loc_step: auto                       # odom: split odometry steps with its own yaw | forward: step length along the gyro heading | auto: odom, forward if its yaw does not follow the gyro
 hyp_pen_slack: 0                     # placements this many penalty points worse than the best are dropped
-hyp_open_min: 40                     # an OPEN border into a cell outside a placement penalises it (rays needed)
+hyp_open_min: 100000                 # rays through an OPEN border into a cell outside a placement penalise it (100000 = off: live 2026-11-26 it fixed wrong bounds after 9 s)
 visit_r_m: 0.40                      # cell visited = base_link within this of its centre
 visit_blocked_r_m: 0.80              # ... or within this when an obstacle in the cell stops it (a prop)
 seen_min_n: 30                       # floor returns inside a cell -> 'seen' (viewer)
 terrain_range_m: 1.6                 # terrain (flat / uneven / elevated) only from returns this near
 # border evidence (heights above the stance floor). Panel (0.43 m): MID hit, UP pass. Curtain (0.15-0.93 m): MID + UP hit.
 edge_range_m: 3.0
-edge_max_pts: 6000
+edge_max_pts: 3000
 edge_mid_lo: 0.20                    # panel band: course panels are 0.43 m high (measured 2026-11-27)
 edge_mid_hi: 0.38
 edge_up_lo: 0.55                     # above the panels: only the curtain (0.15 - 0.93 m, measured) is here
@@ -140,7 +140,7 @@ snap_hz: 3.0
 snap_z_lo: 0.18                      # wall returns: height above the stance floor (panels 0.43 m)
 snap_z_hi: 0.40
 snap_range_m: 2.5
-snap_max_pts: 3000
+snap_max_pts: 1500
 snap_min_pts: 60
 snap_yaw_max_deg: 6.0
 snap_yaw_gain_min: 0.02              # the best rotation must sharpen the histograms by 2 %
@@ -163,6 +163,7 @@ plan_tour_weight: 1.0                # 0 = nearest target; 1 = nearest + greedy 
 plan_first_k: 6                      # the tour scores only the nearest this-many targets as the next goal
 plan_max_cells: 7
 plan_period_s: 1.0
+plan_min_gap_s: 0.5                  # forced replans at most this often (a stuck loop must not load the CPU)
 plan_commit_margin: 1.0              # keep the current goal unless another is this much cheaper
 explore_budget_s: 450.0              # after this (minus the drive there) go to the final cell; 0 = never
 budget_margin_s: 30.0
@@ -184,9 +185,12 @@ grid_block_s: 25.0                   # a blocked border is avoided this long
 grid_block_evidence: 15.0            # WALL evidence added to a border the lane check found blocked
 grid_obst_stop_m: 0.45               # an obstacle inside a cell: creep up to this free distance, then count it visited
 grid_realign_s: 0.8                  # a blocked border: square up to the axis, stand this long (snap), look again
-grid_back_max_m: 0.80                # then back straight to the previous centre (over the ground just walked); 0 = off
+grid_back_max_m: 0.80               # then back straight to the previous centre (over the ground just walked); 0 = off
+grid_back_vx: 0.12                   # (0.08 did not move the real dog, live 2026-11-26)
+grid_back_give_up_s: 2.5             # not moving backwards after this: give up backing, plan on
 cur_detour: 3.0                      # a detected curtain is crossed once if its near side costs at most this (or nothing else is left); <0 = never
 cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)
+grid_use_lio_map: false              # grid lanes use the FAST-LIO map too (live 2026-11-26: map went BAD, ghosts); false also saves its CPU
 grid_fallback_s: 15.0                # no plan: reactive wall following this long, then plan again
 # curtain: border CURTAIN from the lidar (open below the hem, cloth above) or the camera
 curtain: push                        # off | detect | push

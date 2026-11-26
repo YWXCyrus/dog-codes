@@ -46,6 +46,7 @@ class NavIn:
     curtain_det: dict = None              # persistent camera curtain detection {'bearing', 'conf'}
     answers: list = field(default_factory=list)   # /quad/vlm_answer messages since the last step
     stairs_cue: dict = None               # stairs straight ahead: camera model or lidar detector
+    perception: bool = False              # perception answers questions (its /quad/mission_status is fresh)
 
 
 @dataclass
@@ -175,6 +176,8 @@ class CellNav:
         c, t = self.c, ni.t
         if not force and t - self.plan_t < c['plan_period_s'] and cur in self.plan.path:
             return
+        if force and t - self.plan_t < c['plan_min_gap_s'] and cur in self.plan.path:
+            return                        # a stuck loop must not replan every tick (live 2026-11-26: CPU, stale feeds)
         x, y, yaw = ni.apose
         hd = A.yaw_dir(yaw)
         old = self.plan
@@ -435,7 +438,7 @@ class CellNav:
             return False
         e = m.edges.get(A.edge_key(cur, nxt))
         k = A.edge_key(cur, nxt)
-        if (not c['stairs_ask_camera'] or e is None or k in self.stairs_asked
+        if (not c['stairs_ask_camera'] or not ni.perception or e is None or k in self.stairs_asked
                 or not (e.state == A.OPEN or e.mp > e.mh)):
             return False
         self.stairs_asked.add(k)
@@ -486,11 +489,15 @@ class CellNav:
         c, s = self.c, self.sub
         x, y, yaw = ni.apose
         along = (s['tx'] - x) * math.cos(yaw + math.pi) + (s['ty'] - y) * math.sin(yaw + math.pi)
-        if along <= 0.05 or ni.travelled - s['d0'] >= c['grid_back_max_m'] or ni.t - s['t0'] > 10.0:
+        moved = ni.travelled - s['d0']
+        stuck = ni.t - s['t0'] > c['grid_back_give_up_s'] and moved < 0.03   # live 2026-11-26: the dog did not reverse
+        if along <= 0.05 or moved >= c['grid_back_max_m'] or ni.t - s['t0'] > 10.0 or stuck:
+            if stuck:
+                self._ev(ni.t, grid='backing: the dog does not move backwards - going on without it')
             self._set('PLAN', ni.t)
             self.plan_t = -1e9
             return NavOut(Cmd(), '')
-        return NavOut(Cmd(-c['cur_retreat_vx'], 0.0), '', reverse_ok=True)
+        return NavOut(Cmd(-c['grid_back_vx'], 0.0), '', reverse_ok=True)
 
     def _block(self, ni, a, b, why):
         self.m.block(a, b, ni.t, self.c['grid_block_s'])
@@ -638,6 +645,15 @@ class CellNav:
                 m._classify(e)
             need_cam = s['probe'] or (c['cur_ask_camera'] and e.result not in ('camera_yes', 'passed')
                                       and not e.traversed and e.cue < c['cur_cue_min'])
+            if need_cam and not ni.perception:
+                # nobody to ask (perception not running): a lidar curtain goes to the touch test, a probe is dropped
+                if s['probe']:
+                    e.result = 'camera_no'
+                    m._classify(e)
+                    self._set('PLAN', t)
+                    self.plan_t = -1e9
+                    return NavOut(Cmd(), '')
+                return self._start_push(ni)
             if need_cam:
                 self._set('PROBE_ASK' if s['probe'] else 'CURTAIN_ASK', t, **{kk: s[kk] for kk in
                                                                           ('nxt', 'd', 'cur', 'k', 'probe')})

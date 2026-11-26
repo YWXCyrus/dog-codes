@@ -44,6 +44,7 @@ class DriverInput:
     curtain_det: dict = None            # persistent camera curtain detection
     answers: list = field(default_factory=list)
     stairs_cue: dict = None             # stairs straight ahead (camera model / lidar detector)
+    perception: bool = False            # perception is running (fresh /quad/mission_status)
 
 
 @dataclass
@@ -565,7 +566,7 @@ class Driver:
         ni = NavIn(t=t, apose=di.apose, pts=di.nav_pts if di.nav_pts is not None else np.zeros((0, 2)),
                    travelled=self._dist(di), odom_ok=di.odom_ok or self.odom_frozen, elapsed=di.elapsed,
                    last_vx=di.last_cmd.vx, mission=di.mission, curtain_det=di.curtain_det, answers=di.answers,
-                   stairs_cue=di.stairs_cue)
+                   stairs_cue=di.stairs_cue, perception=di.perception)
         no = self.nav.step(ni)
         self.events.extend(no.events)
         self.nav_ask = no.ask
