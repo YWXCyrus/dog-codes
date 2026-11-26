@@ -1,6 +1,7 @@
 """Driving state machine (spec sections 6 and 9.3).
 
-Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT).
+Modes: CRUISE, TURN, BLOCKED, HOLD, STAIRS (phases LOOK, APPROACH, ENTER, CLIMB, DESCEND, EXIT),
+BAR (SQUARE, CROSS: a low cylinder across the lane, rc/bar.py), CURTAIN (ALIGN, PUSH: rc/curtain.py).
 The driver only proposes a command; the guard (rc/guard.py) filters every command afterwards.
 Headings in lanes are body-relative (0 = straight ahead, + = left); targets are stored as
 odom-frame yaw so they survive the dog's own rotation.
@@ -13,10 +14,14 @@ import numpy as np
 
 from rc import gait as Gt
 from rc import geometry as G
+from rc.bar import BarResult
+from rc.config import mode as cfg_mode
+from rc.curtain import CurtainResult
 from rc.guard import Cmd
 from rc.stairs import StairsResult
 
 CRUISE, TURN, BLOCKED, HOLD, STAIRS = 'CRUISE', 'TURN', 'BLOCKED', 'HOLD', 'STAIRS'
+BAR, CURTAIN = 'BAR', 'CURTAIN'
 
 
 @dataclass
@@ -35,6 +40,9 @@ class DriverInput:
     last_cmd: Cmd = field(default_factory=Cmd)   # previous GUARDED command (what the dog was sent)
     dist_from_start: float = 0.0
     front_dist: float = math.inf        # free distance straight ahead (raw scan), for the odometry cross-check
+    hint_yaw: float = None              # frontier planner: yaw (odom frame) to head for; None = no advice
+    bar: BarResult = field(default_factory=BarResult)
+    curtain: CurtainResult = field(default_factory=CurtainResult)
 
 
 @dataclass
@@ -45,6 +53,7 @@ class DriverOutput:
     codes: list = field(default_factory=list)
     events: list = field(default_factory=list)
     stairs_mode: bool = False
+    ignore_front_x: float = 0.0         # guard: front stop ignores obstacles nearer than this (bar / curtain)
 
 
 class Driver:
@@ -82,6 +91,14 @@ class Driver:
         self.odom_frozen = False        # leg odometry did not move while the lidar saw us move
         self.cmd_dist = 0.0             # distance by the guarded command (fallback when odometry is frozen)
         self._last_step_t = None
+        self.front_ignore_x = 0.0       # set while crossing a bar / pushing a curtain, else 0
+        self.hint_failed = False        # set when the planner's hint led into BLOCKED (core tells the planner)
+        self.bar_s = {}
+        self.bar_cool_until = -1e9
+        self.bar_seen_t = -1e9
+        self.curtain_s = {}
+        self.curtain_cool_until = -1e9
+        self.curtain_seen_t = -1e9
 
     # ---------------------------------------------------------------- helpers
     def _dist(self, di):
@@ -94,6 +111,7 @@ class Driver:
         if self.mode == HOLD and self.hold_reason == reason:
             return
         self._resume_phase = self.phase if keep_stairs else None
+        self.front_ignore_x = 0.0
         self.mode, self.hold_reason = HOLD, reason
         if not keep_stairs:
             self.phase = ''
@@ -134,7 +152,12 @@ class Driver:
         return bool(np.any((p[:, 0] > -0.4) & (p[:, 0] < 0.8) & (s > 0.2) & (s < self.c['wall_dist_m'] + 0.6)))
 
     def _choose(self, di):
-        """Wall following over the free lanes; None if nothing is free."""
+        """The lane to take; None if nothing is free.
+
+        nav_mode planner: the free lane closest to the frontier planner's hint; without a usable hint
+        straight ahead if free, else the smallest turn (the wall side only breaks ties). The old
+        "leftmost free lane" rule turned the dog whenever a wall was near for no reason (2026-11-25).
+        nav_mode wall: the old wall following."""
         free = [l for l in di.lanes if l.free]
         if not free:
             return None
@@ -142,6 +165,15 @@ class Driver:
         # ahead is free - the rear is blind, a "free" rear lane is unverified (trial 2: low wall)
         ahead = [l for l in free if abs(l.heading) <= math.pi / 2 + 1e-6]
         rear = [l for l in free if abs(l.heading) > math.pi / 2 + 1e-6]
+        if cfg_mode(self.c, 'nav_mode') == 'planner':
+            if di.hint_yaw is not None:
+                h = G.wrap(di.hint_yaw - di.pose[2])
+                dev = math.radians(self.c['plan_max_dev_deg'])
+                cand = [l for l in free if abs(G.wrap(l.heading - h)) <= dev]
+                if cand:
+                    return min(cand, key=lambda l: abs(G.wrap(l.heading - h)))
+            return (sorted(ahead, key=lambda l: (round(abs(l.heading), 3), -self.side * l.heading))
+                    + sorted(rear, key=lambda l: abs(l.heading)))[0]
         order = (sorted(ahead, key=lambda l: -self.side * l.heading)
                  + sorted(rear, key=lambda l: abs(l.heading)))
         if not self._wall_on_side(di):
@@ -230,11 +262,18 @@ class Driver:
         if c['run_time_s'] > 0 and t - self.t_start > c['run_time_s'] and self.mode != HOLD and not on_stairs:
             self._hold(t, 'time')
 
+        if self.mode not in (BAR, CURTAIN):
+            self.front_ignore_x = 0.0
+
         if self.mode == HOLD:
             return self._out(Cmd())
 
         if self.mode == STAIRS:
             return self._out(self._stairs(di, dyaw))
+        if self.mode == BAR:
+            return self._out(self._bar(di))
+        if self.mode == CURTAIN:
+            return self._out(self._curtain(di))
 
         # ---- stairs triggers (normal modes) ----
         st = di.stairs
@@ -253,6 +292,10 @@ class Driver:
                 return self._out(Cmd())
             elif st.kind in ('up', 'unsure') and c['stairs'] == 'detect':
                 self._ev(t, stairs_seen=st.kind, edge=round(st.edge_x, 2))
+
+        cmd = self._obstacle_triggers(di)
+        if cmd is not None:
+            return self._out(cmd)
 
         if self._progress(di):
             cell = self.grid.current
@@ -288,6 +331,8 @@ class Driver:
             self.free_streak = self.free_streak + 1 if same else 1
             self.streak_yaw = h
         if lane is None or (self.mode == BLOCKED and self.free_streak < c['blocked_confirm_n']):
+            if self.mode != BLOCKED and di.hint_yaw is not None:
+                self.hint_failed = True
             return self._blocked(di, dyaw)
         if self.mode == BLOCKED:
             self.blocked_left_t = t
@@ -524,6 +569,145 @@ class Driver:
             return Cmd(c['stair_vx_down'], wz)
         return Cmd()
 
+    # ---------------------------------------------------------------- bar / curtain
+    def _obstacle_triggers(self, di):
+        """Start a bar crossing or a curtain push; returns the command for this tick or None."""
+        c, t = self.c, di.t
+        bm, cm = cfg_mode(c, 'bar'), cfg_mode(c, 'curtain')
+        cu = di.curtain
+        if cm != 'off' and cu.found and cu.dist < c['curtain_trigger_m'] and t > self.curtain_cool_until:
+            if cm == 'push':
+                self.mode, self.phase = CURTAIN, 'ALIGN'
+                self.curtain_s = {'t0': t, 'tp': t, 'dist': cu.dist, 'bearing': cu.bearing,
+                                  'yaw': G.wrap(di.pose[2] + cu.bearing)}
+                self._ev(t, curtain='ALIGN', dist=round(cu.dist, 2), bearing=round(math.degrees(cu.bearing), 1),
+                         width=round(cu.width, 2), conf=round(cu.conf, 2))
+                return self._curtain(di)
+            if t - self.curtain_seen_t > 3.0:
+                self.curtain_seen_t = t
+                self._ev(t, curtain_seen=round(cu.dist, 2), bearing=round(math.degrees(cu.bearing), 1))
+        b = di.bar
+        if bm != 'off' and b.confident and b.dist < c['bar_trigger_m'] and t > self.bar_cool_until:
+            if bm == 'cross':
+                self.mode, self.phase = BAR, 'SQUARE'
+                self.bar_s = {'t0': t, 'tp': t, 'x0': b.dist, 'depth': b.depth, 'yaws': [],
+                              'yaw': G.wrap(di.pose[2] + b.corr)}
+                self._ev(t, bar='SQUARE', dist=round(b.dist, 2), depth=round(b.depth, 2),
+                         height=round(b.height, 2), corr=round(math.degrees(b.corr), 1))
+                return self._bar(di)
+            if t - self.bar_seen_t > 3.0:
+                self.bar_seen_t = t
+                self._ev(t, bar_seen=round(b.dist, 2), height=round(b.height, 2))
+        return None
+
+    def _finish_obstacle(self, t, ev, cool_attr, cool_s):
+        self.mode, self.phase = CRUISE, ''
+        self.front_ignore_x = 0.0
+        self.target_yaw = None
+        setattr(self, cool_attr, t + cool_s)
+        self.prog.clear()
+        self._ev(t, **ev)
+
+    def _bar(self, di):
+        """SQUARE: stand 0.5 s, turn to face the bar; CROSS: walk straight bar_vx, front stop ignores the
+        bar's own cells; HOLD on heading drift / no progress (no reverse, no turning on the bar)."""
+        c, t = self.c, di.t
+        s = self.bar_s
+        yaw = di.pose[2]
+        if t - s['t0'] > 45.0:
+            self._hold(t, 'bar_timeout')
+            return Cmd()
+        if self.phase == 'SQUARE':
+            if di.bar.found:
+                s['x0'], s['depth'] = di.bar.dist, di.bar.depth
+                s['yaws'] = (s['yaws'] + [G.wrap(yaw + di.bar.corr)])[-9:]
+                s['yaw'] = self._median_angle(s['yaws'])
+            if t - s['tp'] < 0.5:
+                return Cmd()
+            err = G.wrap(s['yaw'] - yaw)
+            if abs(err) > math.radians(5.0):
+                s['turning'] = True
+            if s.get('turning'):
+                if abs(err) > math.radians(c['turn_done_deg']):
+                    return self._turn(err, 0.25, direction=1 if err > 0 else -1)
+                s['turning'] = False
+            self.phase = 'CROSS'
+            s.update(d0=self._dist(di), prog_d=None, prog_t=t, tc=t)
+            self._ev(t, bar='CROSS', x0=round(s['x0'], 2), depth=round(s['depth'], 2))
+            return Cmd()
+        # CROSS
+        done = self._dist(di) - s['d0']
+        need = s['x0'] + s['depth'] + c['bar_extra_m']
+        if done >= need:
+            self._finish_obstacle(t, {'bar': 'DONE', 'travelled': round(done, 2)}, 'bar_cool_until', 3.0)
+            return Cmd()
+        err = G.wrap(s['yaw'] - yaw)
+        if abs(err) > math.radians(c['bar_hold_err_deg']):
+            self._hold(t, 'bar_heading')
+            return Cmd()
+        if di.last_cmd.vx >= 0.05 and not self.odom_frozen:
+            if s['prog_d'] is None or self._dist(di) - s['prog_d'] > 0.05:
+                s['prog_d'], s['prog_t'] = self._dist(di), t
+            elif t - s['prog_t'] > c['bar_no_progress_s']:
+                self._hold(t, 'bar_no_progress')
+                return Cmd()
+        else:
+            s['prog_d'], s['prog_t'] = None, t
+        self.front_ignore_x = max(0.0, s['x0'] + s['depth'] + 0.15 - done)
+        return Cmd(c['bar_vx'], 0.0)
+
+    def _curtain(self, di):
+        """ALIGN: turn to the curtain's bearing; PUSH: walk straight curtain_vx through it. The front stop
+        ignores the cloth (curtain_ignore_m behind the face). Touch test: the face does not come closer
+        although the dog walks for curtain_stall_s -> it is a wall: stop, ignore the camera for a while."""
+        c, t = self.c, di.t
+        s = self.curtain_s
+        yaw = di.pose[2]
+        if self.phase == 'ALIGN' and t - s['t0'] > 15.0 or self.phase == 'PUSH' and t > s['limit']:
+            self._hold(t, 'curtain_timeout')
+            return Cmd()
+        if self.phase == 'ALIGN':
+            if di.curtain.found:
+                s['dist'] = di.curtain.dist
+                s['yaw'] = G.wrap(yaw + di.curtain.bearing)
+            err = G.wrap(s['yaw'] - yaw)
+            if abs(err) > math.radians(c['turn_done_deg']) and t - s['tp'] < 12.0:
+                return self._turn(err, 0.25, direction=1 if err > 0 else -1)
+            self.phase = 'PUSH'
+            # bounded push: 1.3 x the time the walk needs at curtain_vx + 3 s. A wall taken for a curtain
+            # leaves lidar view at ~0.3 m, so the touch test cannot see the contact: this limit is the only stop
+            s.update(d0=self._dist(di), tc=t, fd=collections.deque(),
+                     limit=t + 1.3 * (s['dist'] + c['curtain_through_m']) / c['curtain_vx'] + 3.0)
+            self._ev(t, curtain='PUSH', dist=round(s['dist'], 2))
+            return Cmd()
+        # PUSH
+        done = self._dist(di) - s['d0']
+        if done >= s['dist'] + c['curtain_through_m']:
+            self._finish_obstacle(t, {'curtain': 'DONE', 'travelled': round(done, 2)}, 'curtain_cool_until', 5.0)
+            return Cmd()
+        err = G.wrap(s['yaw'] - yaw)
+        if abs(err) > math.radians(c['curtain_hold_err_deg']):
+            self._hold(t, 'curtain_heading')
+            return Cmd()
+        # touch test: judged only while the face is still seen. Inside curtain_min range the lidar
+        # drops it (zero-range filter, near_drop_m), which looks like "gone", never like a stall.
+        if di.front_dist < 2.0 and done < s['dist']:
+            s['fd'].append((t, di.front_dist, di.last_cmd.vx))
+        else:
+            s['fd'].clear()
+        while s['fd'] and t - s['fd'][0][0] > c['curtain_stall_s']:
+            s['fd'].popleft()
+        if (len(s['fd']) >= 5 and t - s['fd'][0][0] > 0.9 * c['curtain_stall_s']
+                and all(v >= 0.08 for _, _, v in s['fd'])
+                and s['fd'][0][1] - di.front_dist < c['curtain_stall_close_m']):
+            self._finish_obstacle(t, {'curtain': 'WALL', 'front_m': round(di.front_dist, 2)},
+                                  'curtain_cool_until', c['curtain_cooldown_s'])
+            return Cmd()
+        self.front_ignore_x = max(0.0, s['dist'] - done) + c['curtain_ignore_m']
+        return Cmd(c['curtain_vx'], 0.0)
+
     def _out(self, cmd):
         return DriverOutput(cmd=cmd, mode=self.mode, phase=self.phase, codes=list(self.codes),
-                            events=list(self.events), stairs_mode=self.stairs_mode)
+                            events=list(self.events), stairs_mode=self.stairs_mode,
+                            ignore_front_x=self.front_ignore_x)
+

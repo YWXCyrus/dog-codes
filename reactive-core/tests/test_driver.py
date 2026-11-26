@@ -221,13 +221,29 @@ def test_turn_slows_near_the_target_and_turns_back_after_an_overshoot():
     assert out.mode == 'TURN' and out.cmd.vx == 0.0 and out.cmd.wz < 0
 
 
-def test_driving_never_walks_and_turns_with_gait_drift():
+@pytest.mark.parametrize('nav_mode', ['wall', 'planner'])
+def test_driving_never_walks_and_turns_with_gait_drift(nav_mode):
     # corridor with a left wall and a T junction ahead, the gait creeps the heading to the right
     obs = lambda loop: np.vstack([line(-1, 0.6, 3, 0.6), line(2.5, -3, 2.5, 3)])
-    lp = Loop(cfg(), obs=obs, drift=-0.05)
+    lp = Loop(cfg(nav_mode=nav_mode), obs=obs, drift=-0.05)
     lp.run(30.0)
-    assert any(c.vx > 0 for c in lp.cmds) and any(c.wz != 0 for c in lp.cmds)
+    assert any(c.vx > 0 for c in lp.cmds)
+    if nav_mode == 'wall':                       # wall following turns towards the near left wall
+        assert any(c.wz != 0 for c in lp.cmds)
     assert mixed(lp.cmds) == []
+
+
+def test_planner_mode_does_not_turn_for_a_wall_beside_the_dog():
+    # 2026-11-25: with a wall 0.6 m to the left and the way ahead free, the old rule turned left
+    # (leftmost free lane); the new one keeps going straight
+    obs = lambda loop: line(-1, 0.6, 6, 0.6)
+    lp = Loop(cfg(nav_mode='planner'), obs=obs)
+    lp.run(8.0)
+    assert any(c.vx > 0 for c in lp.cmds)
+    assert all(c.wz == 0 for c in lp.cmds)
+    lp2 = Loop(cfg(nav_mode='wall'), obs=obs)
+    lp2.run(8.0)
+    assert any(c.wz != 0 for c in lp2.cmds)      # the old behaviour, kept for comparison
 
 
 def test_constant_cruise_speed_near_obstacles():

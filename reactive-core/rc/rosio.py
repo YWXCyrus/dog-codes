@@ -54,6 +54,7 @@ class RosIO:
         n.create_subscription(Odometry, '/odom', self.on_fastlio, SENSOR_QOS)
         n.create_subscription(Odometry, cfg['lio_topic'], self.on_lio, SENSOR_QOS)
         n.create_subscription(TFMessage, '/tf_static', self.on_tf_static, TF_STATIC_QOS)
+        n.create_subscription(String, cfg['detections_topic'], self.on_detections, 10)   # rc/vision_node.py
         self.status_pub = n.create_publisher(String, '/rc/status', 10)
         self.cmd_pub = None
         self.simple_pub = None
@@ -108,6 +109,14 @@ class RosIO:
         p, q = m.pose.pose.position, m.pose.pose.orientation
         with self.lock:
             self.core.on_lio((p.x, p.y, p.z), (q.x, q.y, q.z, q.w), time.monotonic())
+
+    def on_detections(self, m):
+        try:
+            dets = json.loads(m.data).get('dets', [])
+        except Exception:
+            return
+        with self.lock:
+            self.core.on_vision(dets, time.monotonic())
 
     def on_tf_static(self, m):
         for tf in m.transforms:

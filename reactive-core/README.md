@@ -162,6 +162,8 @@ ROS_DOMAIN_ID=42 bash sim/run_ros_test.sh stairs 110  # same, with the stairs wo
 | `rc/guard.py` | stale feeds, tilt (stop / resume / latch), no reverse, front stop - nothing else |
 | `rc/stairs.py` | stairs detection (height levels) |
 | `rc/gait.py`, `rc/startup.py`, `rc/posture.py` | gait codes and sequences, start-up, sitting/standing, body height from the legs |
+| `rc/planner.py` | frontier planner: own 2-D grid, frontier goal, path, heading hint (also takes a Nav2 path) |
+| `rc/bar.py`, `rc/curtain.py`, `rc/vision_node.py` | low bar / cylinder detector, curtain check (camera + lidar), YOLO sidecar for `best.pt` |
 | `rc/grid.py`, `rc/liomap.py`, `rc/odom.py` | 1 m grid, local 3-D map placed with the FAST-LIO pose, leg odometry check |
 | `viewer/` | read-only web viewer (layers, server, page) |
 | `sim/` | pure-Python simulator, fake dog ROS node, wiring test |
@@ -226,3 +228,42 @@ tracked a 1.5 m walk forward and back to ~0.13 m. Now:
 - Status line: `lio ok` / `lio -` (no fresh pose) / `lio BAD`.
 - Feed check before a run: `ros2 topic hz /imu/data` (~200) and `/livox/points` (~10); today they fell
   to 24 -> 7.5 -> 3.9 Hz over three runs.
+
+## 8. 2026-11-25 (branch `testing`): frontier planner, cylinder (bar), curtain, Nav2 experiment
+
+**Why.** `_choose` took the leftmost free lane within +-90 deg whenever a wall was within ~0.8 m of the
+left side, so the dog turned left for no reason (every run started with a left turn). Test:
+`test_planner_mode_does_not_turn_for_a_wall_beside_the_dog` (the same scene turns in `nav_mode=wall`).
+
+**Navigation (`nav_mode: planner`, default).** `rc/planner.py` keeps its own persistent 2-D grid in the
+leg-odometry frame (not FAST-LIO: it went BAD in 3 of 6 runs and the sim never feeds it), takes the nearest
+reachable frontier (committed 4 s, blacklisted when the dog is blocked towards it) and gives the driver a
+heading hint 1 m along the path. The driver picks the FREE lane closest to the hint; without a hint it
+goes straight if free, else the smallest turn. The live scan always wins over the hint. `nav_mode=wall`
+restores the old wall following. The grid never forgets an obstacle (reset when odometry goes inconsistent).
+
+**Cylinder / low bar (`bar: cross | detect | off`).** `rc/bar.py`: 0.10-0.32 m high, <= 0.35 m deep, across
+>= 60 % of the lane, nothing higher within 0.8 m behind its front edge (rejects walls, stairs, the 0.5 m
+slab of run 181509; a slab seen deep once stays rejected for 4 s). Driver: BAR/SQUARE (stand 0.5 s, face
+the bar's line) then BAR/CROSS (straight, `bar_vx` 0.20, the guard's front stop ignores the bar's own
+cells; HOLD on heading drift or no progress). Heights and depths are guesses: measure the real cylinder.
+
+**Curtain (`curtain: push | detect | off`).** `best.pt` (YOLO26n: curtain / human / stairs, mAP50 0.93 on its
+own validation set, trained 2026-11-20) runs in `rc/vision_node.py`, a separate process publishing
+`/rc/detections` (JSON, bearing + conf). A push starts only when the camera sees a curtain in >= 3
+detections within 1.5 s AND the lidar shows an obstacle face >= 0.5 m wide 0.4-2.0 m ahead on that bearing.
+Driver: CURTAIN/ALIGN (turn on the spot to the bearing), CURTAIN/PUSH (straight at 0.12 m/s,
+front stop ignores the cloth, `curtain_through_m` 0.6 past the face). Touch test: the face still seen but not
+closing for 3 s while walking = wall -> stop, ignore the camera 30 s. A push is also bounded in time.
+Run the node where ultralytics is installed: `python3 -m rc.vision_node --model best.pt --hfov 70`.
+UNVERIFIED on the dog: camera topic, `cam_hfov_deg` 70 (a guess), camera axis = body x, YOLO speed on the
+container CPU, whether the real lidar returns the cloth as a solid face.
+
+**Nav2 experiment** (`tools/nav2/run_probe.sh`, WSL, domain 42): map_server + planner_server (NavFn A*)
+on a static map of the sim arena. 4 of 5 requests give a wall-free path in 4-9 ms, a goal inside a wall is
+refused, the paths convert to the same heading hint (`rc.planner.lookahead_yaw`, `Planner.set_external_path`).
+NOT done: feeding Nav2 the planner's live grid as an OccupancyGrid and sending it the frontier goal
+(needs a ROS node next to run.py). Nav2 stays a path producer; reactive-core still drives.
+
+Switches for a first careful test: `--set curtain=detect --set bar=detect` (events only, no crossing).
+
