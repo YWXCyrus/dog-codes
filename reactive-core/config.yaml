@@ -160,6 +160,7 @@ plan_unknown_cost: 0.5
 plan_curtain_cost: 2.0
 plan_stairs_cost: 12.0               # stairs are crossed when nothing else is left on this side
 plan_tour_weight: 1.0                # 0 = nearest target; 1 = nearest + greedy tour of the rest
+plan_first_k: 6                      # the tour scores only the nearest this-many targets as the next goal
 plan_max_cells: 7
 plan_period_s: 1.0
 plan_commit_margin: 1.0              # keep the current goal unless another is this much cheaper

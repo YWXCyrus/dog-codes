@@ -136,8 +136,32 @@ class CellPlanner:
         return res
 
     def _dists_from(self, cell, t, final_phase=False):
-        best, _ = self.search(cell, None, t, final_phase)
-        return {k: v[0] for k, v in best.items()}
+        """Cheap cell-only Dijkstra (no headings, no turn costs) for the tour estimate. The full (cell, heading)
+        search for 60+ targets took 0.7 s per plan on a laptop and starved the sensor callbacks on the dog
+        (2026-11-26: stale feeds, twist_mux timeouts, the dog did not walk)."""
+        m = self.m
+        c = self.c
+        span = c['plan_max_cells']
+        dist = {cell: 0.0}
+        pq = [(0.0, cell)]
+        while pq:
+            d, a = heapq.heappop(pq)
+            if d > dist.get(a, INF):
+                continue
+            for nd in ORDER:
+                b = A.step(a, nd)
+                if abs(b[0] - cell[0]) > 2 * span or abs(b[1] - cell[1]) > 2 * span:
+                    continue
+                if not self.enterable(b, final_phase):
+                    continue
+                extra = self.move_cost(a, b, t)
+                if extra is None:
+                    continue
+                nd_ = d + 1.0 + extra + (c['plan_stairs_cost'] if m.is_stairs(b) and not m.is_stairs(a) else 0.0)
+                if nd_ < dist.get(b, INF):
+                    dist[b] = nd_
+                    heapq.heappush(pq, (nd_, b))
+        return dist
 
     # ------------------------------------------------------------------ goals
     def targets(self, best):
@@ -168,10 +192,14 @@ class CellPlanner:
             # the tour runs over the LIKELY arena cells (in at least half the live placements): cells of
             # unlikely placements would pull the dog towards places that probably are not there
             likely = [g for g in T if m.weight(g) >= 0.5] or T
-            dmat = {g: self._dists_from(g, t) for g in set(likely) | set(T)}
+            # first goals worth scoring: the nearest few targets (the tour term only reorders close options)
+            firsts = sorted(T, key=lambda x: best[x][0])[:max(1, int(c['plan_first_k']))]
+            dmat = {g: self._dists_from(g, t) for g in set(likely) | set(firsts)}
 
             def dd(a, b):
-                return dmat[a].get(b, 50.0)
+                if a in dmat:
+                    return dmat[a].get(b, 50.0)
+                return dmat[b].get(a, 50.0) if b in dmat else 50.0
 
             def tour(g):
                 """Open tour from g over the other likely targets: nearest neighbour + 2-opt."""
@@ -196,7 +224,7 @@ class CellPlanner:
                                 improved = True
                 return sum(dd(p, q) for p, q in zip(order, order[1:]))
 
-            g = min(T, key=lambda x: (best[x][0] + c['plan_tour_weight'] * tour(x), best[x][0]))
+            g = min(firsts, key=lambda x: (best[x][0] + c['plan_tour_weight'] * tour(x), best[x][0]))
         path = self._path(prev, best, start, start_dir, g)
         return Plan(goal=g, path=path, reason='explore', cost=best[g][0], targets=len(T))
 

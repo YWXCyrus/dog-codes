@@ -178,8 +178,11 @@ class CellNav:
         x, y, yaw = ni.apose
         hd = A.yaw_dir(yaw)
         old = self.plan
-        # time budget: go to the final cell while there is still time to get there
-        if self.goal_mode == 'explore' and c['explore_budget_s'] > 0:
+        # time budget: go to the final cell while there is still time to get there (checked every 3 s and
+        # only in the last 3 minutes: the extra search costs time on the dog's CPU)
+        if (self.goal_mode == 'explore' and c['explore_budget_s'] > 0
+                and ni.elapsed > c['explore_budget_s'] - 180.0 and t - getattr(self, '_budget_t', -1e9) > 3.0):
+            self._budget_t = t
             fp = self.planner.plan(cur, hd, t, 'final')
             if fp.goal is not None:
                 eta = self.planner.eta_s(fp.path, hd)
