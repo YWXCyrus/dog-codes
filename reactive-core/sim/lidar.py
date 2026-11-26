@@ -45,8 +45,9 @@ class Lidar:
             with np.errstate(divide='ignore', invalid='ignore'):
                 t1 = (lo - lo_) / ld
                 t2 = (hi - lo_) / ld
-            tmin = np.nanmax(np.minimum(t1, t2), axis=1)
-            tmax = np.nanmin(np.maximum(t1, t2), axis=1)
+            # fmax/fmin.reduce skip NaN like nanmax/nanmin (identical results), ~5x faster
+            tmin = np.fmax.reduce(np.minimum(t1, t2), axis=1)
+            tmax = np.fmin.reduce(np.maximum(t1, t2), axis=1)
             hit = (tmax >= np.maximum(tmin, 0.0)) & (tmin > 0.0)
             t = np.where(hit & (tmin < t), tmin, t)
         ok = t < self.max_range

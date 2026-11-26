@@ -13,6 +13,7 @@ import numpy as np
 
 from rc import gait as Gt
 from rc import geometry as G
+from rc.cells import CellNav
 from rc.guard import Cmd
 from rc.stairs import StairsResult
 
@@ -35,6 +36,7 @@ class DriverInput:
     last_cmd: Cmd = field(default_factory=Cmd)   # previous GUARDED command (what the dog was sent)
     dist_from_start: float = 0.0
     front_dist: float = math.inf        # free distance straight ahead (raw scan), for the odometry cross-check
+    drops: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))   # drop cells (body frame), nav_mode cells
 
 
 @dataclass
@@ -82,6 +84,8 @@ class Driver:
         self.odom_frozen = False        # leg odometry did not move while the lidar saw us move
         self.cmd_dist = 0.0             # distance by the guarded command (fallback when odometry is frozen)
         self._last_step_t = None
+        # nav_mode cells (rc/cells.py): replaces lanes + wall following + the no-progress check
+        self.cells = CellNav(cfg, self) if str(cfg.get('nav_mode', 'wall')) == 'cells' else None
 
     # ---------------------------------------------------------------- helpers
     def _dist(self, di):
@@ -253,6 +257,9 @@ class Driver:
                 return self._out(Cmd())
             elif st.kind in ('up', 'unsure') and c['stairs'] == 'detect':
                 self._ev(t, stairs_seen=st.kind, edge=round(st.edge_x, 2))
+
+        if self.cells is not None:
+            return self._out(self.cells.step(di, dyaw))
 
         if self._progress(di):
             cell = self.grid.current

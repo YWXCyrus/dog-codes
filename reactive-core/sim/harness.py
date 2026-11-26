@@ -29,7 +29,8 @@ class SimResult:
 
 
 def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0, dt=0.05,
-             resume_on_hold=False, verbose=False):
+             resume_on_hold=False, verbose=False, probe=None):
+    """probe(t, dog, core, cmd): optional, called every step after the start (cmd = guarded command)."""
     dog = DogModel(world, *start, seed=seed, **(dog_kwargs or {}))
     lidar = Lidar(mount_xyz=cfg['mount_xyz'], mount_pitch_deg=cfg['mount_pitch_deg'], seed=seed)
     core = Core(cfg)
@@ -77,6 +78,8 @@ def simulate(world, cfg, T=120.0, start=(0.0, 0.0, 0.0), dog_kwargs=None, seed=0
                 last_mode = m
             if resume_on_hold and core.driver.mode == 'HOLD':
                 core.resume(t)
+            if probe is not None:
+                probe(t, dog, core, cmd)
         if k % 10 == 0:
             res.path.append((round(dog.x, 3), round(dog.y, 3)))
             res.trace.append((round(t, 2), round(dog.x, 2), round(dog.y, 2), round(math.degrees(dog.yaw), 1),

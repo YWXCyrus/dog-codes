@@ -209,7 +209,8 @@ class Core:
                              travelled=self.odom.travelled, stairs=self.stairs, gyro_z=self.gyro[2],
                              tilt_deg=self.att.tilt_deg(), pitch_deg=math.degrees(self.att.pitch),
                              last_cmd=self.last_cmd, dist_from_start=self.dist_from_start(),
-                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']))
+                             front_dist=L.free_distance(self.scan.obs_now, 0.0, self.c['footprint_w']),
+                             drops=self.scan.drops)
             out = self.driver.step(di)
             self.drive_out = out
             self.drive_cmd = out.cmd

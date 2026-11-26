@@ -69,6 +69,52 @@ progress_s: 3.0
 progress_ratio: 0.2
 run_time_s: 0.0                      # > 0: HOLD after this many seconds (0 = off)
 
+# ---- navigation mode (2026-11-25) ----
+# wall  = lanes + left/right wall following (above, unchanged)
+# cells = rc/cells.py: walls give 4 axes; walk straight along an axis, turn on the spot only when
+#         stopped (before a wall, at a junction centre, every cells_seg_m); memory = graph of stops
+nav_mode: wall
+cells_fov_deg: 135                   # points further round than this are ignored (rear blind on the dog)
+cells_align_conf: 0.5                # wall-angle confidence (0..1) needed to use / update the axes
+cells_align_gain: 0.3                # per decision: how fast the yaw-drift estimate follows the walls
+cells_see_deg: 100                   # axis directions within this of the heading are looked at when stopped
+cells_strip_w: 0.50                  # an axis direction is open if a strip this wide ...
+cells_open_m: 0.90                   # ... is free this far from the dog
+cells_stop_front_m: 0.52             # stop when the wall ahead (footprint strip) is this near: ~a cell centre
+cells_side_clear_m: 0.85             # a side is open at some distance along the axis if nothing lies within this
+cells_gap_min_m: 0.55                # side openings this long ...
+cells_gap_max_m: 1.60                # ... up to this long are junctions: stop at their centre
+cells_leave_m: 0.35                  # openings centred within this of the segment start are the one being left
+cells_recentre_every_m: 0.50         # walking: check the centring every this far ...
+cells_recentre_m: 0.06               # ... and stop to re-aim if the corridor centre is this far off
+cells_pre_centre_m: 0.90             # a wall / junction stop (= a turn) is this near: ...
+cells_pre_centre_tol_m: 0.03         # ... re-aim already at this offset
+cells_recentre_deg: 3                # ... or the heading this far off the axis
+cells_extend_m: 0.40                 # no re-centring stop when a junction / wall stop comes within this
+cells_fail_m: 0.15                   # a walk that ends before this far marks that way as failed from that node
+cells_short_tie_m: 0.50              # new ways: shorter branch first; free distances within this are a tie
+cells_decide_max: 8                  # decisions in a row without cells_spin_m of progress -> HOLD (stuck)
+cells_head_err_deg: 12               # walking: heading this far off the aim -> stop and re-aim
+cells_aim_m: 0.8                     # re-centring: aim at the corridor centre line this far ahead
+cells_settle_s: 0.3                  # stand still this long before looking at a stop
+cells_merge_m: 0.35                  # stops closer than this are the same node of the memory graph
+cells_look_m: 1.0                    # a direction leads somewhere new if the point this far along it ...
+cells_new_m: 0.60                    # ... has no walked path within this
+cells_visit_res_m: 0.25              # resolution of the walked-path memory
+cells_tilt_turn_deg: 6               # no on-the-spot turn above this tilt (median of the window below; margin to 10)
+cells_tilt_window_s: 0.5
+cells_tilt_free_m: 0.75              # tilted and a turn wanted: go straight on if this much is free, else HOLD
+cells_body_l: 0.60                   # turning room: body length / width (Lite3 ~0.6 x 0.37 m) ...
+cells_body_w: 0.37
+cells_sweep_margin_m: 0.0            # ... plus this all round, against the scan (0.60 m is already ~5 cm over the sim body)
+cells_shift_deg: 25                  # no room to turn: turn this far towards the corridor centre ...
+cells_shift_m: 0.25                  # ... walk this far, decide again
+cells_shift_max: 2                   # shuffles in a row before HOLD (tight)
+cells_stall_s: 2.0                   # GO commanded but the dog moved < 5 cm in this long -> try another way
+cells_stall_max: 3                   # stalls in a row without 0.3 m of progress -> HOLD
+cells_spin_deg: 330                  # this much turning without cells_spin_m of progress -> HOLD (< 360 incl. lag)
+cells_spin_m: 0.30
+
 # ---- guard (spec section 7): stale feeds, tilt, no reverse, front stop - nothing else ----
 stop_m: 0.24                         # from the sensor: nose ~0.14 m ahead of it -> ~0.10 m nose gap
 guard_corridor_margin_m: 0.05
