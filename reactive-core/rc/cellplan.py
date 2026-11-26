@@ -47,6 +47,8 @@ class CellPlanner:
     def __init__(self, cfg, amap):
         self.c = cfg
         self.m = amap
+        self.no_curtain = False            # this search treats curtain borders as walls (stage 1 of cur_last)
+        self.last_no_curtain = False
 
     # ------------------------------------------------------------------ graph
     def enterable(self, cell, final_phase):
@@ -66,6 +68,8 @@ class CellPlanner:
         if st == A.WALL:
             return None
         if st == A.CURTAIN:
+            if self.no_curtain:
+                return None
             e = m.edges.get(A.edge_key(a, b))
             if c['curtain'] != 'push' or (e is not None and e.result in ('rigid', 'camera_no')):
                 return None
@@ -176,6 +180,19 @@ class CellPlanner:
         c, m = self.c, self.m
         if phase == 'final':
             return self.plan_final(start, start_dir, t)
+        if c['cur_last'] and c['curtain'] == 'push':
+            # stage 1: everything that can be reached WITHOUT a curtain first (live 2026-11-26: the dog went
+            # through the curtain beside the start before the open cells ahead); curtains afterwards
+            self.no_curtain = True
+            try:
+                best, prev = self.search(start, start_dir, t)
+                T = self.targets(best)
+                if T:
+                    self.last_no_curtain = True
+                    return self._choose(start, start_dir, t, best, prev, T)
+            finally:
+                self.no_curtain = False
+        self.last_no_curtain = False
         best, prev = self.search(start, start_dir, t)
         T = self.targets(best)
         cp = self.plan_curtain(start, start_dir, t, best, prev, T)
@@ -186,6 +203,11 @@ class CellPlanner:
             if pr is not None:
                 return pr
             return Plan(reason='none', targets=0)
+        return self._choose(start, start_dir, t, best, prev, T)
+
+    def _choose(self, start, start_dir, t, best, prev, T):
+        """The next exploration goal among the targets T (nearest + tour of the rest)."""
+        c, m = self.c, self.m
         if len(T) == 1 or c['plan_tour_weight'] <= 0:
             g = min(T, key=lambda x: best[x][0])
         else:
@@ -229,7 +251,11 @@ class CellPlanner:
         return Plan(goal=g, path=path, reason='explore', cost=best[g][0], targets=len(T))
 
     def plan_to(self, start, start_dir, t, goal, final_phase=False):
-        best, prev = self.search(start, start_dir, t, final_phase)
+        self.no_curtain = self.last_no_curtain and not final_phase    # same stage as the last plan
+        try:
+            best, prev = self.search(start, start_dir, t, final_phase)
+        finally:
+            self.no_curtain = False
         if goal not in best:
             return None
         return Plan(goal=goal, path=self._path(prev, best, start, start_dir, goal), reason='explore',

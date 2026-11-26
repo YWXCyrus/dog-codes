@@ -190,6 +190,7 @@ grid_back_vx: 0.12                   # (0.08 did not move the real dog, live 202
 body_x_m: 0.35                       # grid lanes ignore points inside the dog's outline (+-this along x from base_link) ...
 body_y_m: 0.24                       # ... and +-this across (its own legs)
 grid_back_give_up_s: 2.5             # not moving backwards after this: give up backing, plan on
+cur_last: true                       # curtains only after every cell reachable without one is visited (then cells behind + the 15 points, then the final cell)
 cur_detour: 3.0                      # a detected curtain is crossed once if its near side costs at most this (or nothing else is left); <0 = never
 cell_pause_s: 1.0                    # still at every new cell centre (perception: scene query)
 grid_use_lio_map: false              # grid lanes use the FAST-LIO map too (live 2026-11-26: map went BAD, ghosts); false also saves its CPU

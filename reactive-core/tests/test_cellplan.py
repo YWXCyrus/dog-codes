@@ -84,3 +84,19 @@ def test_probe_a_wall_when_arena_cells_are_left_behind_it():
                   visited=[(i, j) for i in range(5) for j in (-1, 0, 1) if (i, j) != (4, 1)])
     pl = CellPlanner(CFG, m).plan((0, 0), 'N', 0.0)
     assert pl.reason == 'probe' and pl.probe_edge in (A.edge_key((4, 1), (3, 1)), A.edge_key((4, 1), (4, 0)))
+
+
+def test_curtain_beside_the_start_waits_until_the_open_cells_are_explored():
+    # live 2026-11-26: curtain between (1,0) and (1,-1) beside the start, open cells ahead
+    m = known_map(visited=((0, 0),))
+    e = m.edge(A.edge_key((1, 0), (1, -1)))
+    e.mh, e.uh, e.state, e.was_curtain = 50.0, 50.0, A.CURTAIN, True
+    p = CellPlanner(CFG, m)
+    pl = p.plan((0, 0), 'N', 0.0)
+    assert pl.reason == 'explore' and pl.goal != (1, -1)
+    assert not any({a, b} == {(1, 0), (1, -1)} for a, b in zip(pl.path, pl.path[1:]))
+    # every cell reachable without the curtain visited -> now the curtain
+    for c in [(i, j) for i in range(5) for j in (-1, 0, 1)]:
+        m.force_visit(c, 0.0)
+    pl = p.plan((1, 0), 'N', 0.0)
+    assert pl.reason == 'curtain' and pl.path[-2:] == [(1, 0), (1, -1)]
